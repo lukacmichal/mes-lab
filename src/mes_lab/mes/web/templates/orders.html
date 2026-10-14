@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% from "_help.html" import bi, help %}
+{% block title %}Work orders{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Work orders</h1>
+  <span class="sub" id="counts"></span>
+  <div class="spacer"></div>
+  <div class="tabs" id="tabs">
+    <a href="#open" data-status="open" class="active">Open</a>
+    <a href="#completed" data-status="completed">Completed</a>
+    <a href="#all" data-status="">All</a>
+  </div>
+</div>
+
+{% call help("orders") %}
+  <div class="cols">
+    {{ bi("<b>A work order</b> says what to make and how many, e.g. 720 × BCM-200. It is split into <b>jobs</b>: one job is one pass through one line. A double-sided board has two SMT jobs (bottom side, then top side), a product has one final assembly job. The chips in the last column are the jobs: operation @ line: good / expected.",
+          "<b>Výrobná zákazka</b> hovorí, čo a koľko vyrobiť, napr. 720 × BCM-200. Delí sa na <b>joby</b>: jeden job je jeden prechod jednou linkou. Obojstranná doska má dva SMT joby (spodná strana, potom vrchná), výrobok má jeden job vo finálnej montáži. Štítky v poslednom stĺpci sú joby: operácia @ linka: dobré / očakávané.") }}
+    {{ bi("<b>Who creates them:</b> for now a demo planner inside the MES. A final assembly line that runs out of work gets a new order; SMT orders are created when the board supermarket falls below its safety stock. In phase 4 a fake ERP (the office system) will send the orders instead. <i>Released</i> = waiting, <i>In progress</i> = a line works on it, <i>Completed</i> = every piece is good or scrapped.",
+          "<b>Kto ich vytvára:</b> zatiaľ demo plánovač v MES. Linka finálnej montáže, ktorej dôjde práca, dostane novú zákazku; SMT zákazky vznikajú, keď zásoba dosiek v supermarkete klesne pod poistnú hodnotu. Vo fáze 4 ich bude posielať falošné ERP (kancelársky systém). <i>Released</i> = čaká, <i>In progress</i> = linka na nej pracuje, <i>Completed</i> = každý kus je dobrý alebo zošrotovaný.") }}
+  </div>
+{% endcall %}
+
+<div class="panel">
+  <div id="orders"><p class="empty">Waiting for data…</p></div>
+</div>
+{% endblock %}
+{% block scripts %}<script src="/static/orders.js?v={{ version }}"></script>{% endblock %}

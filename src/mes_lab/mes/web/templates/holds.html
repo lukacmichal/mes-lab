@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% from "_help.html" import bi, help %}
+{% block title %}Holds{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Holds</h1>
+  <span class="sub">Containment: stop everything that might share a problem</span>
+</div>
+
+{% call help("holds") %}
+  <div class="cols">
+    {{ bi("<b>When to use a hold:</b> a customer complains about one unit, a machine turns out to have been out of tolerance, a component lot is suspect. You put a hold on what might be affected; the MES then stops each of those pieces at its next check-in and puts it into quarantine.",
+          "<b>Kedy použiť blokáciu:</b> zákazník reklamuje jeden kus, ukáže sa, že stroj bol mimo tolerancie, šarža súčiastok je podozrivá. Zablokuješ, čoho sa to môže týkať; MES potom každý taký kus zastaví pri jeho najbližšom check-ine a dá ho do karantény.") }}
+    {{ bi("<b>Three kinds:</b> a <i>serial</i> (a panel, board, unit, box or pallet), a <i>work order</i> (everything made in it), or a <i>station and time window</i> (everything that passed, e.g., the reflow oven of SMT-02 between 10:00 and 12:00). Everything made from the affected pieces is included automatically, using the genealogy. <i>Preview</i> shows how many pieces it would catch.",
+          "<b>Tri druhy:</b> <i>sériové číslo</i> (panel, doska, výrobok, box alebo paleta), <i>zákazka</i> (všetko, čo sa v nej vyrobilo), alebo <i>stanica a časové okno</i> (všetko, čo prešlo napr. pecou SMT-02 medzi 10:00 a 12:00). Všetko, čo sa z dotknutých kusov vyrobilo, sa pridá samo podľa genealógie. <i>Preview</i> ukáže, koľko kusov by zachytila.") }}
+    {{ bi("<b>Release</b> ends the hold and decides about the pieces waiting in quarantine: back to production, or scrap. Pieces that are on another active hold stay where they are.",
+          "<b>Release</b> ukončí blokáciu a rozhodne o kusoch čakajúcich v karanténe: späť do výroby alebo do šrotu. Kusy, ktoré sú aj na inej aktívnej blokácii, zostanú, kde sú.") }}
+  </div>
+{% endcall %}
+
+{% if not can_act %}
+<div class="notice" style="margin-bottom:16px">
+  <a href="/login?next=/holds">Sign in</a> to create or release holds. Without signing in you can look around.
+</div>
+{% else %}
+<div class="panel" style="margin-bottom:16px">
+  <h3>New hold</h3>
+  <form id="hold-form">
+    <div class="form-grid">
+      <label class="field">What
+        <select name="kind" id="kind">
+          <option value="SERIAL">Serial number</option>
+          <option value="WORK_ORDER">Work order</option>
+          <option value="STATION_WINDOW">Station and time window</option>
+        </select>
+      </label>
+      <label class="field"><span id="target-label">Serial number</span>
+        <input name="target" id="target" required autocomplete="off">
+      </label>
+      <label class="field window">From (plant time)<input type="datetime-local" name="window_from" id="from"></label>
+      <label class="field window">To (plant time)<input type="datetime-local" name="window_to" id="to"></label>
+    </div>
+    <label class="field" style="margin-top:12px">Reason
+      <textarea name="reason" id="reason" rows="2" required minlength="3" placeholder="e.g. customer complaint 8D-0042: no communication on LIN bus"></textarea>
+    </label>
+    <div style="display:flex;gap:8px;margin-top:12px;align-items:center;flex-wrap:wrap">
+      <button class="btn" type="button" id="preview">Preview</button>
+      <button class="btn primary" type="submit">Create hold</button>
+      <span id="form-msg" class="muted"></span>
+    </div>
+  </form>
+</div>
+{% endif %}
+
+<div class="panel">
+  <h3>Holds</h3>
+  <div id="holds"><p class="empty">Waiting for data…</p></div>
+</div>
+{% endblock %}
+{% block scripts %}<script src="/static/holds.js?v={{ version }}"></script>{% endblock %}

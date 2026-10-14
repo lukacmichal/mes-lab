@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en" data-lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>{% block title %}MES{% endblock %} · ACME Plant 1</title>
+  <script>
+    // help texts language: remembered choice, else the browser's language
+    (function () {
+      var lang = "en";
+      try { lang = localStorage.getItem("mes-lang") || ((navigator.language || "").slice(0, 2) === "sk" ? "sk" : "en"); } catch (e) {}
+      document.documentElement.dataset.lang = lang;
+    })();
+  </script>
+  <link rel="stylesheet" href="/static/app.css?v={{ version }}">
+  <link rel="stylesheet" href="/static/floor.css?v={{ version }}">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232f73e0'/%3E%3Cpath d='M8 22V10h4l4 7 4-7h4v12h-3.5v-6.5L17 21h-2l-3.5-5.5V22z' fill='white'/%3E%3C/svg%3E">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/">
+    <span class="logo">MES</span>
+    <span>ACME Plant 1<small>{{ plant.company }}</small></span>
+  </a>
+  <a class="maker" href="https://github.com/lukacmichal" target="_blank" rel="noopener" title="Designed and built by Michal Lukáč — GitHub">{% include "_github.html" %}<span>by Michal Lukáč</span></a>
+  <nav class="nav">
+    <a href="/" class="{{ 'active' if active == 'floor' }}">Floor</a>
+    <a href="/overview" class="{{ 'active' if active == 'overview' }}">Overview</a>
+    <details class="{{ 'active' if active == 'lines' }}">
+      <summary>Lines ▾</summary>
+      <div class="menu">
+        {% for area in nav %}
+          <div class="group">{{ area.name }}</div>
+          {% for l in area.lines %}<a href="/lines/{{ l.code }}">{{ l.code }}</a>{% endfor %}
+        {% endfor %}
+      </div>
+    </details>
+    <a href="/andon" class="{{ 'active' if active == 'andon' }}">Andon</a>
+    <a href="/kpi" class="{{ 'active' if active == 'kpi' }}">KPI</a>
+    <a href="/tuning" class="{{ 'active' if active == 'tuning' }}">Tuning</a>
+    <a href="/orders" class="{{ 'active' if active == 'orders' }}">Orders</a>
+    <a href="/trace" class="{{ 'active' if active == 'trace' }}">Trace</a>
+    <a href="/quality" class="{{ 'active' if active == 'quality' }}">Quality</a>
+    <a href="/holds" class="{{ 'active' if active == 'holds' }}">Holds</a>
+    <a href="/guide" class="{{ 'active' if active == 'guide' }} guide-link">Guide</a>
+  </nav>
+  <form class="search" action="/trace" method="get" role="search">
+    <input name="q" placeholder="Serial or order…" aria-label="Search a serial number or work order" autocomplete="off">
+  </form>
+  <div class="spacer"></div>
+  <div class="clock">
+    <div class="lang" role="group" aria-label="Language of the explanations">
+      <button type="button" data-lang="en" title="Explanations in English">EN</button>
+      <button type="button" data-lang="sk" title="Vysvetlivky po slovensky">SK</button>
+    </div>
+    <span class="badge" id="shift-badge">Shift –</span>
+    <div class="simctl">
+      <label class="speed" title="Simulation speed">
+        <select id="speed-select" aria-label="Simulation speed"{% if not can_act %} disabled title="Sign in to change the simulation speed"{% endif %}>
+          {% for s in [1, 10, 30, 60, 120, 300, 600] %}<option value="{{ s }}">{{ s }}×</option>{% endfor %}
+        </select>
+      </label>
+      <button type="button" class="ctl" id="sim-pause" aria-label="Pause the plant"
+              title="{{ 'Pause: the plant stands still (machines, people, robots)' if can_act else 'Sign in to pause the plant' }}"{% if not can_act %} disabled{% endif %}>
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path class="i-pause" d="M4 3h3v10H4zM9 3h3v10H9z" fill="currentColor"/><path class="i-play" d="M4 2.5v11l9-5.5z" fill="currentColor"/></svg>
+      </button>
+      <button type="button" class="ctl" id="sim-goto" aria-label="Go to a time"
+              title="{{ 'Go to a time: the plant runs ahead as fast as it can' if can_act else 'Sign in to send the plant ahead in time' }}"{% if not can_act %} disabled{% endif %}>
+        <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M1.5 3v10l6-5zM8 3v10l6-5z" fill="currentColor"/></svg>
+      </button>
+      <div class="goto-pop panel" id="goto-pop" hidden></div>
+    </div>
+    <div>
+      <div class="time" id="plant-clock">--:--:--</div>
+      <div class="date" id="plant-date">plant time</div>
+    </div>
+    <span class="dot" id="live-dot" title="Simulation connection"></span>
+    {% if login_enabled %}
+      {% if user %}
+        <button type="button" class="logout" id="logout" title="Signed in as {{ user }}">{{ user }} · Sign out</button>
+      {% else %}
+        <a class="logout" href="/login?next={{ request.url.path }}" title="Sign in to put holds, release or scrap pieces and change the speed">Sign in</a>
+      {% endif %}
+    {% endif %}
+  </div>
+</header>
+<main>
+  <div class="banner" id="offline-banner">
+    <b>The plant is not reporting.</b> Live values below are the last ones received.
+  </div>
+  <div class="banner calm" id="sim-banner"></div>
+  <div class="banner calm" id="scenario-banner"></div>
+  <div class="banner" id="mes-error-banner">
+    <div class="bi"><p lang="en"><b>The MES is failing:</b> <span class="mes-err-n"></span> failed requests in the last 10 minutes.
+      Stations that must ask the MES before they work (interlock) wait, so production stops. This needs a fix in the MES.</p>
+    <p lang="sk"><b>MES zlyháva:</b> <span class="mes-err-n"></span> neúspešných požiadaviek za posledných 10 minút.
+      Stanice, ktoré sa musia pred prácou spýtať MES (interlock), čakajú, a tak výroba stojí. Treba opraviť MES.</p></div>
+  </div>
+  {% block content %}{% endblock %}
+</main>
+<footer>
+  <div class="credit">Plant, simulation and MES designed and built by <b>Michal Lukáč</b> ·
+    <a href="https://github.com/lukacmichal" target="_blank" rel="noopener">{% include "_github.html" %}github.com/lukacmichal</a></div>
+  <div>ACME Automotive Electronics and its customers are fictional · MES lab {{ version }}</div>
+</footer>
+<script>
+  window.MES_TEXT = {states: {{ state_help|tojson }}, stations: {{ station_help|tojson }}, units: {{ unit_help|tojson }}};
+  window.MES_CAN_ACT = {{ "true" if can_act else "false" }};
+  window.MES_VERSION = {{ version|tojson }};
+</script>
+<script src="/static/app.js?v={{ version }}"></script>
+<script src="/static/floor-core.js?v={{ version }}"></script>
+<script src="/static/floor-art.js?v={{ version }}"></script>
+<script src="/static/floor-machines.js?v={{ version }}"></script>
+<script src="/static/floor-people.js?v={{ version }}"></script>
+<script src="/static/floor-robots.js?v={{ version }}"></script>
+<script src="/static/floor-boards.js?v={{ version }}"></script>
+<script src="/static/floor-view.js?v={{ version }}"></script>
+<script src="/static/station-view.js?v={{ version }}"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

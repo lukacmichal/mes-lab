@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% from "_help.html" import bi, bi_inline, help %}
+{% block title %}Plant floor{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Plant floor</h1>
+  <span class="sub">{{ plant.name }} · {{ bi_inline("seen from above, live", "z výšky, naživo") }}</span>
+  <span class="sub faint">· {{ bi_inline("designed and built by", "navrhol a postavil") }} <a href="https://github.com/lukacmichal" target="_blank" rel="noopener">Michal Lukáč</a></span>
+</div>
+
+
+
+<div class="kpis" id="kpis"></div>
+<div class="floor-stage panel" id="floor-stage">
+  <canvas id="floor-canvas" aria-label="Live plan of the plant"></canvas>
+  <div class="floor-tools">
+    <button type="button" id="fl-in" title="Zoom in">+</button>
+    <button type="button" id="fl-out" title="Zoom out">−</button>
+    <button type="button" id="fl-fit" title="Whole plant">⌂</button>
+  </div>
+  <button type="button" class="floor-call" id="fl-call">Call a person</button>
+  <div class="call-panel" id="call-panel"></div>
+  <div class="floor-card" id="floor-card"></div>
+  <div class="floor-tip" id="floor-tip"></div>
+  <div class="floor-speed" id="floor-speed"></div>
+</div>
+<div class="floor-below">
+  <div class="panel" id="side-main"></div>
+  <div class="panel" id="side-legend">
+    <h3>{{ bi_inline("Legend", "Legenda") }}</h3>
+    <div class="legend" id="legend"></div>
+    <div class="legend products" id="products-legend"></div>
+    <div class="legend people" id="people-legend"></div>
+  </div>
+</div>
+{% call help("floor") %}
+  <div class="cols">
+    {{ bi("<b>The plant seen from above, live.</b> Everything you see is what the simulated plant is doing right now: each box is a machine, each coloured piece on a belt is a real panel, board, product, box or pallet, and it moves because the plant moved it. Nothing is a looped picture: a machine only moves its tools while it holds a piece, and stands still when it waits, is broken or is being changed over.",
+          "<b>Závod z výšky, naživo.</b> Všetko, čo vidíš, je to, čo simulovaný závod práve robí: každý box je stroj, každý farebný kus na páse je skutočný panel, doska, výrobok, box alebo paleta a hýbe sa preto, že ho závod posunul. Nič nie je zacyklený obrázok: stroj hýbe nástrojmi len vtedy, keď drží kus, a stojí, keď čaká, má poruchu alebo sa prestavuje.") }}
+    {{ bi("<b>The way things flow (left to right):</b> goods-in warehouse → <i>bare panels</i> on a belt to each SMT line → soldered boards ride to the <i>supermarket</i> → a belt brings boards to each final assembly line → finished products ride to <i>packing</i> (box, label, pallet) → pallets go to the finished goods warehouse and a <i>customer's truck</i> takes them away from the dock. Pieces with a defect go into the red <i>NOK tote</i> at the exit of their cell and a <i>robot (AMR)</i> takes them to <i>repair</i> and back; robots also bring bins of parts to the loaders of final assembly and empty boxes to packing (kanban). Where an aisle crosses a belt, the belt goes over it on a bridge.",
+          "<b>Ako to tečie (zľava doprava):</b> sklad materiálu → <i>holé panely</i> po páse na každú linku SMT → spájkované dosky idú do <i>supermarketu</i> → pás privezie dosky na každú linku finálnej montáže → hotové výrobky idú do <i>balenia</i> (box, štítok, paleta) → palety idú do skladu hotových výrobkov a odtiaľ ich na rampe odvezie <i>kamión zákazníka</i>. Kusy s chybou idú do červenej <i>NOK prepravky</i> na výstupe svojej bunky a <i>robot (AMR)</i> ich odvezie do <i>opravy</i> a späť; roboty vozia aj zásobníky dielov k nakladačom finálnej montáže a prázdne boxy do balenia (kanban). Kde ulička kríži pás, pás ide ponad ňu po mostíku.") }}
+    {{ bi("<b>Colours:</b> a piece has the colour of its product (green BCM-200, white LED-DRV-40, blue BMS-12S, red PDC-8) and it looks the way its history says: paste, components, connector, lacquer, resin, housing and screws appear when the machine that does them has worked. The coloured strip on top of a machine is its state (see the legend); grey is normal waiting.",
+          "<b>Farby:</b> kus má farbu svojho výrobku (zelený BCM-200, biely LED-DRV-40, modrý BMS-12S, červený PDC-8) a vyzerá tak, ako hovorí jeho história: pasta, súčiastky, konektor, lak, živica, kryt a skrutky pribudnú, keď stroj, ktorý ich robí, odpracoval. Farebný pásik na vrchu stroja je jeho stav (pozri legendu); sivá je bežné čakanie.") }}
+    {{ bi("<b>Use it:</b> scroll to zoom, drag to move, <b>click a line</b> to fly into it and see its numbers on the right, click a machine to see what it holds, double-click to zoom right onto it. <b>At 60× the pieces fly by</b>: choose 10× in the header (sign in) to watch the work in comfortable slow motion. The picture runs a second behind the plant on purpose: by then it knows every walk and every ride in full, so even at 60× everybody goes along the real way, never straight through a wall. Hover over a thing in the rooms (coffee machine, server rack, andon board...) to see what it is. The dark screen over every line is its <b>hour by hour</b> board: the plan of the hour against the output (green on plan, amber close, red behind) and the hours of the shift; hover over it for the table. <b>⏸</b> stops the whole plant so you can look at everything in peace, <b>⏩</b> sends it ahead to a time you pick.",
+          "<b>Ovládanie:</b> kolieskom priblížiš, ťahaním posúvaš, <b>kliknutím na linku</b> do nej vletíš a vpravo uvidíš jej čísla, kliknutím na stroj uvidíš, čo drží, dvojklikom sa priblížiš priamo k nemu. <b>Pri 60× kusy len preletia</b>: v hlavičke zvoľ 10× (po prihlásení) a uvidíš prácu v pohodlnom spomalení. Obraz zámerne beží sekundu za závodom: vtedy už pozná každú chôdzu a každú jazdu celú, takže aj pri 60× ide každý po skutočnej trase, nikdy rovno cez stenu. Keď prejdeš myšou nad vec v miestnostiach (kávovar, serverový rack, andon tabuľa…), ukáže sa, čo to je. Tmavá obrazovka nad každou linkou je jej tabuľa <b>hodina po hodine</b>: plán hodiny oproti výrobe (zelená podľa plánu, oranžová tesne, červená pozadu) a hodiny zmeny; po prejdení myšou ukáže tabuľku. <b>⏸</b> zastaví celý závod, aby si si všetko pozrel v pokoji, <b>⏩</b> ho posunie dopredu na čas, ktorý zvolíš.") }}
+    {{ bi("<b>The people:</b> every figure is a person of the plant. Orange = operators (at a machine or at the team desk of the line), blue = maintenance technicians, purple = the IT technician (network, computers, printers), red = the production foreman, green = logistics at the dock. They walk along the aisles to the machine that calls them (a minor stop, an inspection check, a breakdown) and while all technicians are busy the machine waits. The sign shows how many people are on site per shift, at their posts, on a break and on the way. Everybody has a half hour lunch and ten minutes at the coffee machine (a relief person sits in); now and then somebody walks to the toilet (men's or women's: into a cabin, the door shuts and nobody sees in, then the hands are washed). Logistics workers with nothing to do for five minutes sit down at the table in their corner by the dock: cards with a colleague, a book alone. At a shift change the new people walk in at the entrance through the ESD gate (wrist strap test; technicians, IT and the foreman then put on a white ESD coat), wait beside their seat for the hand-over, and the old ones walk out through the turnstile (the coat stays in the locker); technicians hand over to their successor around the end of the shift and finish a repair in hand first. People and robots have their own lanes and let each other pass where they cross. <b>Click</b> a person (with a photo, as on a company badge), a robot, a piece (its serial number and what is inside a box or on a pallet), a pallet in the warehouse, a truck or the staff building. <b>Call a person</b> (top left, signed in) sends somebody of maintenance, IT, the foreman or logistics to a machine of your choice, like the andon button of a station, and the plan follows them.",
+          "<b>Ľudia:</b> každá postavička je človek závodu. Oranžoví = operátori (pri stroji alebo pri tímovom stole linky), modrí = technici údržby, fialový = IT technik (sieť, počítače, tlačiarne), červený = majster výroby, zelení = skladníci na rampe. Chodia po uličkách k stroju, ktorý ich volá (krátky výpadok, overenie kontroly, porucha) a keď sú všetci technici zaneprázdnení, stroj čaká. Tabuľa ukazuje, koľko ľudí je v závode podľa zmien, koľko na svojich miestach, na prestávke a na ceste. Každý má polhodinovú prestávku na obed a desať minút pri kávovare (sedí tam záskok); občas niekto zájde na toaletu (mužskú alebo ženskú: do kabínky, dvere sa zavrú a dnu nikto nevidí, potom si umyje ruky). Skladníci, ktorí päť minút nemajú čo robiť, si sadnú k stolu vo svojom kútiku pri rampe: s kolegom hrajú karty, sami čítajú knihu. Pri striedaní zmien noví ľudia vojdú vchodom cez ESD bránu (test náramku; technici, IT a majster si potom oblečú biely ESD plášť), počkajú vedľa svojho miesta na odovzdanie a starí odídu cez turniket (plášť ostane v skrinke); technici odovzdajú zmenu nástupcovi okolo jej konca a rozrobenú opravu najprv dokončia. Ľudia a roboty majú vlastné pruhy a kde sa križujú, pustia sa. <b>Klikni</b> na človeka (s fotkou ako na firemnom preukaze), na robota, na kus (jeho sériové číslo a čo je v boxe alebo na palete), na paletu v sklade, na kamión alebo na budovu pre zamestnancov. <b>Privolať pracovníka</b> (vľavo hore, po prihlásení) pošle niekoho z údržby, IT, majstra alebo skladníka k stroju, ktorý vyberieš, ako tlačidlo andon na stanici, a plán ho sleduje.") }}
+  </div>
+{% endcall %}
+{% endblock %}
+{% block scripts %}<script src="/static/floor-call.js?v={{ version }}"></script>
+<script src="/static/floor-page.js?v={{ version }}"></script>{% endblock %}

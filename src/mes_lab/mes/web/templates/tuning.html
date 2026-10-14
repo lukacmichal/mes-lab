@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% from "_help.html" import bi, bi_inline, help %}
+{% block title %}Tuning{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>{{ bi_inline("Tuning the plant", "Ladenie závodu") }}</h1>
+  <span class="sub">{{ bi_inline("A game: change the plant, run it and see what it earns", "Hra: zmeň závod, spusti ho a uvidíš, čo zarobí") }}</span>
+</div>
+
+{% call help("tuning") %}
+  <div class="cols">
+    {{ bi("<b>The goal:</b> the highest <b>margin per hour</b> = what the customers pay for the good units minus their material, the people, the lines (depreciation and service, whether they run or not), the energy, the robots and the scrapped material. More lines and people make more units but cost money every hour; too few robots or technicians make the lines wait.",
+          "<b>Cieľ:</b> čo najvyššia <b>marža za hodinu</b> = čo zákazníci zaplatia za dobré kusy mínus ich materiál, ľudia, linky (odpisy a servis, či bežia alebo nie), energia, roboty a zošrotovaný materiál. Viac liniek a ľudí vyrobí viac kusov, ale každú hodinu stojí peniaze; primálo robotov alebo technikov necháva linky čakať.") }}
+    {{ bi("<b>How it works:</b> set the knobs and press <i>Simulate</i>. A copy of the plant is built with your knobs and runs offline, away from the live plant, for the hours you choose, from 6:00 with the same random seed: the same knobs always give the same result, and two scenarios differ only by the knobs. A run of 12 hours takes a few seconds to a minute; the result appears on the left and stays on the board. <b>The live plant does not change by that</b> &ndash; to see a scenario on the Floor, press <i>Use in the live plant</i> (signed in): the live plant then starts a new run with these knobs (the shop floor starts empty), until you put it back.",
+          "<b>Ako to funguje:</b> nastav gombíky a stlač <i>Prepočítať</i>. Postaví sa kópia závodu s tvojimi gombíkmi a pobeží mimo živého závodu toľko hodín, koľko zvolíš, od 6:00 s rovnakou náhodou: rovnaké gombíky dajú vždy rovnaký výsledok a dva scenáre sa líšia len gombíkmi. Beh 12 hodín trvá niekoľko sekúnd až minútu; výsledok sa ukáže vľavo a ostane na tabuli. <b>Živý závod sa tým nemení</b> &ndash; ak chceš scenár vidieť na Floor, stlač <i>Použiť v živom závode</i> (po prihlásení): živý závod potom začne nový beh s týmito gombíkmi (dielňa začne prázdna), kým ho nevrátiš späť.") }}
+    {{ bi("<b>Where to start:</b> the <a href='/kpi'>KPI page</a> shows that the SMT lines have spare capacity (their work content is lower than the number of lines), final assembly runs at the limit. Try fewer SMT lines, then see whether the robots and the technicians still keep up (material waiting, MTTR).",
+          "<b>Kde začať:</b> <a href='/kpi'>stránka KPI</a> ukazuje, že linky SMT majú voľnú kapacitu (obsah ich práce je menší ako počet liniek), finálna montáž beží na hrane. Skús menej liniek SMT a potom sleduj, či roboty a technici stíhajú (čakanie na materiál, MTTR).") }}
+  </div>
+{% endcall %}
+
+<div class="grid-2 tuning">
+  <div class="stack">
+    <div class="panel" id="tune-result"></div>
+    <div class="panel">
+      <h3>{{ bi_inline("Best scenarios so far", "Najlepšie scenáre doteraz") }}</h3>
+      <div class="table-wrap"><table id="tune-board"></table></div>
+    </div>
+  </div>
+  <div class="stack">
+    <div class="panel" id="tune-live"></div>
+    <div class="panel">
+      <h3>{{ bi_inline("Knobs", "Gombíky") }}</h3>
+      <div id="tune-knobs"></div>
+      <div class="tune-run">
+        <label class="field" style="margin:0">{{ bi_inline("Hours of plant time", "Hodín času závodu") }}
+          <select id="tune-hours"></select></label>
+        <button type="button" class="btn primary" id="tune-go">{{ bi_inline("Simulate", "Prepočítať") }}</button>
+        <button type="button" class="btn" id="tune-reset">{{ bi_inline("Plant as it is", "Závod ako je") }}</button>
+      </div>
+      <div class="tune-run">
+        <button type="button" class="btn" id="tune-live-go">{{ bi_inline("Use in the live plant", "Použiť v živom závode") }}</button>
+      </div>
+      <div id="tune-status" class="muted"></div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}<script src="/static/tuning.js?v={{ version }}"></script>{% endblock %}

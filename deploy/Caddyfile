@@ -1,0 +1,18 @@
+__DOMAIN__ {
+	encode zstd gzip
+
+	# the shop-floor API is for the plant on this machine only
+	@shopfloor path /api/v1/edge/* /api/v1/trace/check-in /api/v1/trace/repair /api/v1/dispatch/* /api/v1/sim/runs /api/v1/sim/scenario
+	respond @shopfloor 404
+
+	reverse_proxy 127.0.0.1:8070
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "same-origin"
+		X-Robots-Tag "noindex, nofollow"
+		-Server
+	}
+}

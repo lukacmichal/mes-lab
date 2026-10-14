@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mes-lab"
+version = "0.8.0"
+description = "Virtual automotive electronics plant (discrete-event simulation) with its own MES"
+requires-python = ">=3.12"
+dependencies = [
+    "simpy>=4.1",
+    "pydantic>=2.7",
+    "pyyaml>=6",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "sqlalchemy>=2.0.30",
+    "psycopg[binary]>=3.2",
+    "jinja2>=3.1",
+    "httpx>=0.27",
+    "alembic>=1.13",
+    "itsdangerous>=2.1",
+    "tzdata",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pgserver>=0.1.4"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"mes_lab.mes" = ["web/templates/*.html", "web/static/*", "migrations/*.py", "migrations/*.mako",
+                 "migrations/versions/*.py"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

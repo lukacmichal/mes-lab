@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% from "_help.html" import bi, help %}
+{% block title %}Traceability{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Traceability</h1>
+  <span class="sub">Search a serial number, a box, a pallet or a work order</span>
+</div>
+
+{% call help("trace") %}
+  <div class="cols">
+    {{ bi("<b>Every piece has a serial number.</b> The MES gives a panel and its boards their numbers at the PCB laser, a product its number when its board is loaded in final assembly, and boxes and pallets theirs at packing. Copy any serial from another page (e.g. the piece shown in a station tile) and search for it.",
+          "<b>Každý kus má sériové číslo.</b> MES dá panelu a jeho doskám čísla pri laseri, výrobku pri vložení dosky vo finálnej montáži a boxom a paletám pri balení. Skopíruj ľubovoľné číslo z inej stránky (napr. kus v dlaždici stanice) a vyhľadaj ho.") }}
+    {{ bi("<b>Genealogy</b> is the family tree: <i>made from</i> goes back (product ← board ← panel), <i>went into</i> goes forward (board → product → KLT box → pallet). That is how a customer complaint about one unit leads to the panel and everything else made with it.",
+          "<b>Genealógia</b> je rodokmeň: <i>made from</i> ide dozadu (výrobok ← doska ← panel), <i>went into</i> dopredu (doska → výrobok → KLT box → paleta). Takto sa od reklamácie jedného kusa dostaneš k panelu a ku všetkému, čo sa s ním vyrobilo.") }}
+    {{ bi("<b>History</b> lists every operation (check-out): station, time, result and measured values (torque, temperature…). Steps of the panel appear in a board's and a product's history too. <b>Routing</b> chips show which steps of the current operation are done; the MES does not let a piece skip one.",
+          "<b>História</b> obsahuje každú operáciu (check-out): stanicu, čas, výsledok a namerané hodnoty (moment, teplota…). Kroky panela sa ukážu aj v histórii dosky a výrobku. Štítky <b>routing</b> ukazujú, ktoré kroky aktuálnej operácie sú hotové; MES nedovolí kus žiadny preskočiť.") }}
+  </div>
+{% endcall %}
+
+<form class="trace-search" id="trace-form">
+  <input id="q" name="q" placeholder="e.g. BCM262801234567, P000001234-02, K000000012, WO0000042" autocomplete="off">
+  <button class="btn primary" type="submit">Search</button>
+</form>
+<div id="result"><p class="empty">Enter a serial number or a work order.</p></div>
+{% endblock %}
+{% block scripts %}<script src="/static/trace.js?v={{ version }}"></script>{% endblock %}

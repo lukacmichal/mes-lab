@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% from "_help.html" import bi, help %}
+{% block title %}Plant overview{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Plant overview</h1>
+  <span class="sub">{{ plant.name }}</span>
+</div>
+
+{% call help("overview") %}
+  <div class="cols">
+    {{ bi("<b>The whole plant on one screen.</b> Every card is one production line. The coloured left edge and the label say what the line is doing right now: <i>Running</i>, <i>Down</i> (breakdown), <i>Changeover</i> (switching product), <i>No order</i> (nothing to make) or <i>No material</i> (waiting for boards).",
+          "<b>Celý závod na jednej obrazovke.</b> Každá karta je jedna výrobná linka. Farebný ľavý okraj a nápis hovoria, čo linka práve robí: <i>Running</i> (beží), <i>Down</i> (porucha), <i>Changeover</i> (prestavba na iný výrobok), <i>No order</i> (nemá čo robiť) alebo <i>No material</i> (čaká na dosky).") }}
+    {{ bi("<b>On a card:</b> the product, the operation (an SMT line makes a double-sided board in two passes, <i>bottom side</i> then <i>top side</i>, under one work order) and the work order the line is loading now; the end of the line may still be finishing the previous one. The bar shows progress: the light part are pieces put on the line, the dark part pieces finished good. <i>This hour / last hour / shift</i> count good pieces leaving the line. The coloured strip at the bottom are the stations of the line, in the order the product travels: green working, grey waiting (normal), blue changeover, red breakdown. <b>Point at a segment</b> to watch that station live.",
+          "<b>Na karte:</b> výrobok, operácia (SMT linka robí obojstrannú dosku na dva prechody, <i>bottom side</i> a potom <i>top side</i>, v jednej zákazke) a zákazka, ktorú linka práve vpúšťa; koniec linky môže ešte dokončovať predchádzajúcu. Pruh ukazuje postup: svetlá časť sú kusy vpustené na linku, tmavá časť hotové dobré kusy. <i>This hour / last hour / shift</i> sú dobré kusy, ktoré opustili linku za túto hodinu, minulú hodinu a zmenu. Farebný pásik dole sú stanice linky v poradí, ako nimi ide výrobok: zelená pracuje, sivá čaká (normálne), modrá prestavba, červená porucha. <b>Ukáž myšou na dielik</b> a uvidíš tú stanicu naživo.") }}
+    {{ bi("<b>How material flows:</b> SMT lines solder components onto boards → boards wait on the <i>SMT supermarket</i> shelf (right) → final assembly lines build products from them → packing puts them into boxes and on pallets → warehouse. Bad pieces take the side loop through <i>repair</i>.",
+          "<b>Ako tečie materiál:</b> linky SMT spájkujú súčiastky na dosky → dosky čakajú v regáli <i>SMT supermarket</i> (vpravo) → linky finálnej montáže z nich stavajú výrobky → balenie ich dá do boxov a na palety → sklad. Zlé kusy idú bočnou cestou cez <i>opravu</i>.") }}
+    {{ bi("<b>Why are SMT lines often idle?</b> They are faster than final assembly. The planner gives them work only when the supermarket drops below its safety stock (the mark in the bars). The plant clock top right runs faster than real time; you can change the speed there.",
+          "<b>Prečo SMT linky často stoja?</b> Sú rýchlejšie ako finálna montáž. Plánovač im dá prácu, až keď zásoba v supermarkete klesne pod poistnú hodnotu (značka v pruhoch). Hodiny závodu vpravo hore bežia rýchlejšie ako skutočný čas; rýchlosť sa dá zmeniť tam.") }}
+  </div>
+{% endcall %}
+
+<div class="kpis" id="kpis"></div>
+<div class="grid-2">
+  <div id="areas"><p class="empty">Waiting for data…</p></div>
+  <div class="stack">
+    <div class="panel">
+      <h3>SMT supermarket</h3>
+      <div id="supermarket" class="bars"></div>
+      <p class="faint" style="margin:8px 0 0;font-size:12px">Boards in stock between SMT and final assembly. Mark = safety stock.</p>
+    </div>
+    <div class="panel">
+      <h3>Repair and rework</h3>
+      <div id="repair"></div>
+    </div>
+    <div class="panel">
+      <h3>Finished goods warehouse</h3>
+      <div id="warehouse"></div>
+    </div>
+    <div class="panel">
+      <h3>Station states</h3>
+      <div class="legend" id="legend"></div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}<script src="/static/overview.js?v={{ version }}"></script>{% endblock %}

@@ -1,0 +1,68 @@
+# Defect codes and downtime reasons used across the plant.
+# Categories drive reporting (Pareto, OEE loss buckets).
+# A breakdown reason with crew: IT is fixed by the IT technician (network, computers, printers,
+# programming adapters); every other breakdown by a maintenance technician.
+
+defect_codes:
+  # Solder paste printing
+  INSUFFICIENT_PASTE:   {name: Insufficient solder paste, category: PRINT}
+  PASTE_BRIDGE:         {name: Solder paste bridge, category: PRINT}
+  PASTE_OFFSET:         {name: Paste offset from pad, category: PRINT}
+  # Placement
+  MISSING_COMPONENT:    {name: Missing component, category: PLACEMENT}
+  SHIFTED_COMPONENT:    {name: Shifted component, category: PLACEMENT}
+  WRONG_POLARITY:       {name: Wrong polarity, category: PLACEMENT}
+  WRONG_COMPONENT:      {name: Wrong component value, category: PLACEMENT}
+  COMPONENT_FAULT:      {name: Faulty component (supplier), category: COMPONENT}
+  # Reflow soldering
+  SOLDER_BRIDGE:        {name: Solder bridge, category: SOLDERING}
+  COLD_JOINT:           {name: Cold solder joint, category: SOLDERING}
+  TOMBSTONE:            {name: Tombstoned chip, category: SOLDERING}
+  VOIDING:              {name: Excessive voiding under BTC, category: SOLDERING}
+  # Board handling
+  DEPANEL_DAMAGE:       {name: Board edge damage after depaneling, category: HANDLING}
+  # Final assembly
+  BENT_PIN:             {name: Bent press-fit pin, category: ASSEMBLY}
+  COATING_VOID:         {name: Conformal coating void, category: COATING}
+  COATING_ON_CONNECTOR: {name: Coating on connector area, category: COATING}
+  POTTING_VOID:         {name: Potting void / bubble, category: POTTING}
+  POTTING_OVERFLOW:     {name: Potting overflow, category: POTTING}
+  SCREW_NOK:            {name: Screw torque/angle out of window, category: ASSEMBLY}
+  FLASH_FAIL:           {name: Software download failed, category: PROGRAMMING}
+
+downtime_reasons:
+  # Generic / organisational
+  CHANGEOVER:           {name: Product changeover, category: CHANGEOVER}
+  SIDE_CHANGE:          {name: Changeover to the other board side, category: CHANGEOVER}
+  MICROSTOP:            {name: Minor stop, category: MINOR_STOP}
+  PLANNED_MAINTENANCE:  {name: Planned maintenance, category: PLANNED, needs: meter}
+  NO_ORDER:             {name: No order scheduled, category: NOT_SCHEDULED}
+  NO_MATERIAL:          {name: Waiting for material, category: MATERIAL}
+  MES_UNAVAILABLE:      {name: MES not answering (interlock), category: IT}
+  # Breakdowns
+  CONVEYOR_JAM:         {name: Conveyor jam, category: BREAKDOWN}
+  SENSOR_FAULT:         {name: Sensor fault, category: BREAKDOWN, needs: meter}
+  PLC_FAULT:            {name: PLC / controller fault, category: BREAKDOWN, needs: meter}
+  SAFETY_DOOR:          {name: Safety circuit / door interlock, category: BREAKDOWN, needs: meter}
+  LASER_SOURCE_FAULT:   {name: Laser source fault, category: BREAKDOWN, needs: meter}
+  STENCIL_CLOGGED:      {name: Stencil apertures clogged, category: BREAKDOWN}
+  SQUEEGEE_FAULT:       {name: Squeegee drive fault, category: BREAKDOWN, needs: meter}
+  VISION_ERROR:         {name: Vision / fiducial recognition error, category: BREAKDOWN}
+  NOZZLE_CLOG:          {name: Nozzle clogged, category: BREAKDOWN}
+  FEEDER_FAULT:         {name: Feeder fault, category: BREAKDOWN}
+  HEAD_SERVO_FAULT:     {name: Placement head servo fault, category: BREAKDOWN, needs: meter}
+  HEATER_ZONE_FAULT:    {name: Heater zone out of tolerance, category: BREAKDOWN, needs: meter}
+  CAMERA_FAULT:         {name: Camera / lighting fault, category: BREAKDOWN, needs: meter}
+  ROUTER_BIT_BROKEN:    {name: Router bit broken, category: BREAKDOWN}
+  PRESS_FORCE_FAULT:    {name: Press force sensor fault, category: BREAKDOWN, needs: meter}
+  DISPENSE_VALVE_FAULT: {name: Dispense valve fault, category: BREAKDOWN, needs: meter}
+  UV_LAMP_FAULT:        {name: UV lamp intensity low, category: BREAKDOWN, needs: meter}
+  FIXTURE_FAULT:        {name: Test fixture fault, category: BREAKDOWN, needs: meter}
+  PROBE_WORN:           {name: Test probes worn, category: BREAKDOWN, needs: meter}
+  SCREW_FEED_JAM:       {name: Screw feeder jam, category: BREAKDOWN}
+  SPINDLE_FAULT:        {name: Screw spindle fault, category: BREAKDOWN, needs: meter}
+  PROGRAMMER_FAULT:     {name: Programmer / adapter fault, category: BREAKDOWN, crew: IT}
+  NETWORK_FAULT:        {name: Network / server unreachable, category: BREAKDOWN, crew: IT}
+  TESTER_FAULT:         {name: Tester instrument fault, category: BREAKDOWN, needs: meter}
+  PRINTER_FAULT:        {name: Label printer fault, category: BREAKDOWN, crew: IT}
+  TOOL_FAULT:           {name: Hand tool fault, category: BREAKDOWN}

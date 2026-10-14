@@ -1,0 +1,104 @@
+# People of the plant, and the trucks that take the finished goods away.
+#
+# crew.seats: the staffed places of a line, per area kind (a line gets one of each).
+#   attends - station types the person in that seat looks after: he clears their minor
+#             stops and does the operator checks of their inspections (verify). "*" = all
+#             the others of the line.
+#   home    - where he waits: "desk" (the team desk of the line) or a station type (he stands
+#             at that machine, and the machine has its computer there).
+#   fixed   - never leaves his machine (loader, final inspection, packing, repair bench).
+# While a seat's person is on a break, a relief person sits there.
+#
+# crew.shifts: the people that are not tied to a seat, per shift. Operators of a seat belong
+#   to the shift too (the same number of seats every shift); `relief` people cover the breaks.
+#   manager: the production manager works the morning shift; the andon escalates a breakdown to him
+#   after an hour (on the other shifts he is called on the phone), and he leads the shift meeting with
+#   the foreman. See crew.andon.
+# crew.andon: a breakdown is the technician's (level 1); after `foreman_min` the foreman comes to the
+#   machine (level 2), after `manager_min` the production manager (level 3). `meeting_at_min` after the
+#   start of a shift the foreman, the technicians, IT (and the manager in the morning) meet for
+#   `meeting_min` minutes in front of the andon board: the open calls and the last shift's numbers.
+# crew.breaks: minutes after the start of the shift; every seat gets each break in turn. A 30
+#   minute lunch and, on top of it, ten minutes at the coffee machine (the walks are part of
+#   them), nothing else: the rest of the day people stay at their place (a relief person waits
+#   at the team desk of the lines, not in the break room).
+# crew.wc: now and then somebody walks to the toilet (a few minutes, the men's or the women's, then
+#   the hands are washed); the machine waits for the operator to come back.
+# crew.esd: the production is an ESD protected area. Operators pass the ESD gate (wrist strap
+#   and footwear test, one at a time) when they come in; technicians, IT and the foreman put
+#   on an ESD coat in the lockers (and take it off there when they go home); logistics stays in
+#   the warehouse and at the dock.
+# crew.women: the share of women per job (electronics assembly is mostly women, maintenance mostly
+#   men); a woman's surname has its female form (Nováková, Hrušovská).
+# crew.lounge: a logistics worker who has stood at the dock with nothing to do for `after_min`
+#   minutes sits down at the table in their corner: cards when a colleague is there, a book alone.
+
+crew:
+  walk_speed: 25            # plan units per second (a calm walk through the aisles)
+  seats:
+    SMT:
+      - {code: FRONT, home: desk, attends: [LOADER, LASER_PCB, PASTE_PRINTER, SPI, PNP_CHIP]}
+      - {code: BACK, home: AOI, attends: [PNP_IC, REFLOW_OVEN, AOI, UNLOADER, DEPANELER]}
+    FA:
+      - {code: LOADER, home: FA_LOADER, fixed: true, attends: [FA_LOADER]}
+      - {code: INSPECTION, home: FINAL_INSPECTION, fixed: true, attends: [FINAL_INSPECTION]}
+      - {code: FLOATER, home: desk, attends: ["*"]}
+    PACK:
+      - {code: SCAN, home: PACK_SCAN, fixed: true, attends: [PACK_SCAN, BOX_LABEL]}
+      - {code: PALLET, home: PALLETIZER, fixed: true, attends: [PALLETIZER]}
+    REPAIR:
+      - {code: BENCH, home: REPAIR_BENCH, fixed: true, attends: [REPAIR_BENCH], per_station: true}
+  shifts:
+    A: {relief: 6, maintenance: 3, it: 1, foreman: 1, logistics: 3, manager: 1}
+    B: {relief: 6, maintenance: 3, it: 1, foreman: 1, logistics: 2}
+    C: {relief: 6, maintenance: 2, it: 1, foreman: 1, logistics: 1}
+  breaks:
+    - {name: coffee, kind: coffee, start: 130, length: 10}
+    - {name: lunch, kind: lunch, start: 210, length: 30}
+  wc: {trips: 2, minutes: 3, wash_s: 10}
+  esd: {gates: 2, check_s: 6, coat_s: 20}
+  women: {OPERATOR: 0.6, MAINTENANCE: 0.12, IT: 0.3, FOREMAN: 0.35, LOGISTICS: 0.2}
+  lounge: {after_min: 5}
+  andon: {foreman_min: 15, manager_min: 60, meeting_at_min: 10, meeting_min: 5}
+
+# Customers send a truck on a timetable (local time). It loads the oldest pallets of the
+# customer's products that wait in the warehouse, up to its capacity, and leaves with a
+# delivery note (ASN). With fewer than min_pallets waiting it is sent away for half an hour
+# and tried again, at most three times; with nothing waiting it does not come in at all.
+# (A pallet holds 1000-1600 units, so a plant of this size fills one or two a day per customer.)
+shipping:
+  load_s: 60                # one logistics worker puts one pallet into a truck in this time
+  yard_speed: 5             # plan units per second of a truck in the yard
+  trucks:
+    - {customer: KRAFTWAGEN, bay: 0, capacity: 8, min_pallets: 1, at: ["07:00", "19:00"]}
+    - {customer: NORDAUTO, bay: 1, capacity: 8, min_pallets: 1, at: ["09:00", "21:00"]}
+    - {customer: VOLTARO, bay: 2, capacity: 8, min_pallets: 1, at: ["11:00", "23:00"]}
+
+# Autonomous mobile robots (AMR). Nothing flies across the plant, and nobody carries crates around:
+# * the repair loop: every cell of a line drops a rejected piece into the red NOK tote at its exit; the
+#   fleet manager sends the nearest free robot, it docks in the gap beside the tote (off the walkway),
+#   takes it and brings it to the pass-through rack of the repair centre. Repaired pieces wait in the
+#   outbound rack until a robot takes them back to the line (boards to the supermarket); pieces the
+#   MES refuses go to the quarantine cage and come back the same way when the MES releases them.
+# * line-side material (two-bin kanban, `supply`): the loader of a final assembly line takes the parts
+#   of a unit (housing, connector, screws: `kit` in products.yaml) from bins in its rack; when a bin
+#   runs empty, the next one is opened and a robot brings a full one from the goods-in warehouse and
+#   takes the empty one back. The scan station of packing gets stacks of empty KLT boxes the same way.
+#   With no full bin left the loader stops (no material).
+# Robots drive in their own lane of the aisle; where they cross a walkway they wait for the people.
+# Idle robots wait on their chargers; below `low` % a robot charges before the next order. The battery
+# drains while driving (more with a load) and a little while standing (computer, laser scanners).
+amr:
+  robots: 4
+  speed: 30                 # plan units per second (about 0.8 m/s, they share the aisles with people)
+  capacity: 4               # totes on the top module
+  transfer_s: 8             # docking at a stop and moving the tote
+  battery_h: 6              # hours of driving empty on a full battery
+  load_drain: 0.25          # fully loaded it uses this much more
+  idle_drain: 0.3           # standing it uses this share of what driving uses
+  charge_h: 1.2             # empty to full on the charger
+  low: 25
+  supply:
+    kit_bins: 3             # bins of parts in the rack at the loader (one open, the others full)
+    box_stacks: 2           # stacks of empty KLT boxes at the scan station of packing
+    boxes_per_stack: 8

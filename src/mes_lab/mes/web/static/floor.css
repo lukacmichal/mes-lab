@@ -1,0 +1,108 @@
+/* Live plant floor: the canvas page and the pop-up with a close-up of a machine. */
+.floor-stage { position: relative; padding: 0; overflow: hidden; height: var(--floor-h, 540px); margin-bottom: 16px; }
+.floor-below { display: grid; grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr); gap: 16px; align-items: start; margin-bottom: 16px; }
+.floor-stage canvas { display: block; width: 100%; height: 100%; cursor: grab; }
+.floor-tools { position: absolute; right: 10px; top: 10px; display: grid; gap: 6px; }
+.floor-tools button {
+  width: 32px; height: 32px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel);
+  color: var(--text); font-size: 17px; line-height: 1; cursor: pointer; box-shadow: var(--shadow);
+}
+.floor-tools button:hover { border-color: var(--text); }
+.floor-tip {
+  position: fixed; z-index: 40; pointer-events: none; display: none; max-width: 300px; padding: 7px 10px;
+  background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .25); font-size: 12.5px; line-height: 1.4;
+}
+.floor-tip b { font-size: 13px; }
+.floor-card {
+  position: absolute; left: 10px; bottom: 10px; max-width: min(420px, 70%); padding: 9px 12px; border-radius: 10px; display: none;
+  background: color-mix(in srgb, var(--panel) 94%, transparent); border: 1px solid var(--border); box-shadow: var(--shadow); font-size: 12.5px; line-height: 1.45;
+}
+.floor-card.show { display: block; }
+.floor-card .head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.floor-card .head b { font-size: 14px; }
+.floor-card .x { margin-left: auto; border: 0; background: transparent; color: var(--muted); font-size: 16px; cursor: pointer; line-height: 1; }
+.floor-card .muted { color: var(--muted); }
+.floor-card .progress { margin: 5px 0 2px; }
+.floor-speed {
+  position: absolute; right: 10px; bottom: 10px; max-width: 46%; padding: 6px 10px; border-radius: 8px; font-size: 12px;
+  background: color-mix(in srgb, var(--s-warn) 18%, var(--panel)); border: 1px solid color-mix(in srgb, var(--s-warn) 45%, transparent);
+  display: none;
+}
+.floor-speed.show { display: block; }
+
+/* "Call a person": the andon call of a department to a machine */
+.floor-call {
+  position: absolute; left: 10px; top: 10px; z-index: 5; padding: 6px 12px; border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--panel); color: var(--text); font-size: 13px; font-weight: 600; box-shadow: var(--shadow);
+}
+.floor-call::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #f1a33c; margin-right: 7px; vertical-align: 1px; }
+.floor-call:hover { border-color: var(--text); }
+.call-panel {
+  position: absolute; left: 10px; top: 48px; z-index: 6; width: min(380px, calc(100% - 20px)); display: none; padding: 10px 12px 12px;
+  background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 10px 28px rgba(0, 0, 0, .25);
+  font-size: 13px; line-height: 1.45;
+}
+.call-panel.show { display: block; }
+.call-panel .head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.call-panel .head b { font-size: 15px; }
+.call-panel .x { margin-left: auto; border: 0; background: transparent; color: var(--muted); font-size: 18px; cursor: pointer; line-height: 1; }
+.call-panel .muted { color: var(--muted); font-size: 12px; margin: 0 0 8px; }
+.call-panel .roles { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; margin-bottom: 8px; }
+.call-panel .field { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+.call-panel select { font: inherit; color: var(--text); background: var(--bg, var(--panel)); border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; }
+.call-panel .row { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
+.call-panel .check { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+.call-panel .check[hidden] { display: none; }
+.call-panel .actions { display: flex; gap: 8px; margin-top: 4px; }
+.call-panel .status { margin-top: 8px; min-height: 1.4em; }
+.call-panel .status:empty { display: none; }
+.floor-below h3 { margin-bottom: 8px; }
+.floor-below .what { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
+.floor-below .what b { font-size: 17px; }
+.floor-below .kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; font-size: 13px; margin: 10px 0; }
+.floor-below .kv span:nth-child(odd) { color: var(--muted); }
+.floor-below p { margin: 6px 0; font-size: 13px; line-height: 1.5; }
+.floor-below .muted { font-size: 12.5px; }
+.floor-below .links { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.floor-below .cols2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 4px 28px; }
+.legend.products, .legend.people { margin-top: 10px; }
+.legend.products i { border-radius: 2px; width: 12px; height: 9px; }
+@media (max-width: 1100px) {
+  .floor-below { grid-template-columns: 1fr; }
+}
+
+/* line page: the line from above */
+.line-stage { position: relative; padding: 0; overflow: hidden; height: 300px; margin-bottom: 16px; }
+.line-stage canvas { display: block; width: 100%; height: 100%; cursor: grab; }
+
+/* pop-up with a close-up of one machine */
+.sv-pop {
+  position: fixed; z-index: 60; width: 460px; max-width: calc(100vw - 24px); display: none;
+  background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, .28); padding: 10px 12px 12px;
+}
+.sv-pop.open { display: block; }
+.sv-pop .sv-top { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+.sv-pop .sv-top b { font-size: 15px; }
+.sv-pop .sv-top .muted { font-size: 12px; flex: 1; }
+.sv-pop .sv-x { border: 0; background: transparent; color: var(--muted); font-size: 18px; cursor: pointer; line-height: 1; }
+.sv-pop .sv-scene canvas { display: block; width: 100%; height: 230px; border-radius: 8px; }
+.sv-pop .sv-state { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; margin: 8px 0 4px; font-size: 13px; }
+.sv-pop .sv-text { font-size: 13px; line-height: 1.45; margin-top: 6px; }
+.sv-pop .sv-text.what { color: var(--muted); }
+.sv-pop .sv-meta { font-size: 12px; color: var(--muted); margin-top: 8px; border-top: 1px dashed var(--border); padding-top: 6px; }
+.sv-pop .sv-hint { font-size: 11px; color: var(--faint); margin-top: 6px; }
+[data-station] { cursor: pointer; }
+
+/* serial numbers in the side panel are buttons you can follow */
+.floor-below button.chip { cursor: pointer; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 11px; color: inherit; }
+.floor-below button.chip:hover { border-color: var(--accent, #2f73e0); }
+.floor-below .chips { margin: 4px 0; line-height: 1.9; max-height: 150px; overflow: auto; }
+
+/* a person: the photo as on a company badge, made from how they look on the plan */
+.person-head { display: flex; gap: 12px; align-items: center; margin-bottom: 6px; }
+.person-head .what { margin-bottom: 2px; }
+.portrait { flex: none; border-radius: 10px; box-shadow: 0 1px 4px rgba(0, 0, 0, .18); }
+.person-card { display: flex; gap: 8px; align-items: center; margin-top: 4px; }
+.person-card .portrait { width: 40px; height: 47px; border-radius: 6px; }

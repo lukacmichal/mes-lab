@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% from "_help.html" import bi, help %}
+{% block title %}{{ line.code }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>{{ line.code }}</h1>
+  <span class="sub">{{ line.name }}</span>
+  <span id="line-status"></span>
+  <span id="line-detail" class="muted"></span>
+  <div class="spacer"></div>
+  <span class="muted" id="wip"></span>
+</div>
+
+{% call help("line") %}
+  <div class="cols">
+    {{ bi("<b>The line from above (top):</b> the real thing, live. Every piece on the belts is a panel, board or product that the simulated line holds right now, in the colour of its product; machines move their tools only while they work on a piece. Scroll to zoom, drag to move, click a machine for a close-up. Below it the same line as tiles with numbers.",
+          "<b>Linka z výšky (hore):</b> skutočný stav, naživo. Každý kus na pásoch je panel, doska alebo výrobok, ktorý linka práve drží, vo farbe svojho výrobku; stroje hýbu nástrojmi len vtedy, keď pracujú na kuse. Kolieskom priblížiš, ťahaním posúvaš, kliknutím na stroj uvidíš detail. Pod tým je tá istá linka ako dlaždice s číslami.") }}
+    {{ bi("<b>Line flow:</b> every tile is a station, from left to right as the product travels. The coloured top edge is its state, the time next to the name is how long it has been in that state. Two tiles on top of each other are identical stations sharing the work. <b>Point at a tile</b> to watch the station live; click it to keep the view open.",
+          "<b>Tok linky:</b> každá dlaždica je stanica, zľava doprava, ako ide výrobok. Farebný horný okraj je jej stav, čas vedľa názvu hovorí, ako dlho v ňom je. Dve dlaždice nad sebou sú rovnaké stanice, ktoré si delia prácu. <b>Ukáž myšou na dlaždicu</b> a uvidíš stanicu naživo; kliknutím ostane otvorená.") }}
+    {{ bi("<b>Small squares between tiles</b> are places on the conveyor; blue ones are occupied. Squares that fill up in front of a station point to the slowest or a stopped station. Inside a tile: the serial number of the piece being worked on and the pieces done this shift (<i>NOK</i> = rejected, <i>FC</i> = false calls of an inspection).",
+          "<b>Malé štvorčeky medzi dlaždicami</b> sú miesta na dopravníku; modré sú obsadené. Ak sa plnia pred niektorou stanicou, je to najpomalšia alebo stojaca stanica. V dlaždici: sériové číslo kusa, na ktorom pracuje, a kusy hotové za zmenu (<i>NOK</i> = vyradené, <i>FC</i> = falošné poplachy kontroly).") }}
+    {{ bi("<b>Below:</b> good pieces per hour against the plan of the hour (dashed frame; green = on plan, amber = a little behind, red = behind; the same numbers as on the screen hanging over the line on the Floor; striped = current hour); how each station spent this shift (the one with the longest green bar is the bottleneck; light grey = waiting for parts, dark grey = cannot pass parts on, both normal; red and orange are real losses); defects found; the jobs of the line; and breakdowns, changeovers and maintenance with reason and duration.",
+          "<b>Nižšie:</b> dobré kusy po hodinách oproti plánu hodiny (čiarkovaný rámik; zelená = podľa plánu, oranžová = trochu pozadu, červená = pozadu; tie isté čísla ako na obrazovke nad linkou na Floor; šrafované = aktuálna hodina); ako stanice strávili túto zmenu (najdlhší zelený pruh má úzke hrdlo; svetlosivá = čaká na kusy, tmavosivá = nemá kam kus posunúť, oboje normálne; skutočné straty sú červená a oranžová); nájdené chyby; úlohy (joby) linky; poruchy, prestavby a údržba s dôvodom a trvaním.") }}
+  </div>
+{% endcall %}
+
+<div class="panel line-stage" id="line-stage">
+  <canvas id="line-canvas" aria-label="The line seen from above"></canvas>
+</div>
+
+<div class="panel" style="margin-bottom:16px">
+  <h3>Line flow · live</h3>
+  <div class="flow-wrap"><div class="flow" id="flow"><p class="empty">Waiting for data…</p></div></div>
+  <div class="legend" id="legend" style="margin-top:12px"></div>
+</div>
+
+<div class="grid-3">
+  <div class="panel">
+    <h3>Hour by hour · <span id="unit">good</span></h3>
+    <div class="hourly" id="hourly"></div>
+    {% if line.area.kind == "SMT" %}<p class="faint" style="margin:8px 0 0;font-size:12px">Counted at the depaneler, so hours spent on a bottom side show no boards.</p>{% endif %}
+  </div>
+  <div class="panel">
+    <h3>Station states · this shift</h3>
+    <div class="dist" id="dist"></div>
+  </div>
+  <div class="panel">
+    <h3>Defects found · this shift</h3>
+    <div id="defects"></div>
+  </div>
+</div>
+
+<div class="grid-2" style="margin-top:16px">
+  <div class="panel">
+    <h3>Jobs on this line</h3>
+    <div id="jobs"></div>
+  </div>
+  <div class="panel">
+    <h3>Downtime events</h3>
+    <div id="events"></div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>const LINE_CODE = {{ line.code|tojson }};</script>
+<script src="/static/line.js?v={{ version }}"></script>
+{% endblock %}

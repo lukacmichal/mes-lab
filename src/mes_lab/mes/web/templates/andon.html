@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% from "_help.html" import bi, bi_inline, help %}
+{% block title %}Andon{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Andon</h1>
+  <span class="sub">{{ bi_inline("Calls for help, how long they wait and who they reached", "Volania o pomoc, ako dlho čakajú a ku komu sa dostali") }}</span>
+</div>
+
+{% call help("andon") %}
+  <div class="cols">
+    {{ bi("<b>Andon</b> is the plant's way of asking for help: a machine that breaks down calls a technician (the light on the machine and the board in the production office). A call that is not solved in time <b>escalates</b>: after <b>" ~ (rule.foreman_min|int) ~ " minutes</b> the foreman comes to the machine (level 2) and organizes help (another technician, a spare part, moving the work); after <b>" ~ (rule.manager_min|int) ~ " minutes</b> the production manager comes (level 3, on the morning shift; on the other shifts he is called on the phone) and decides about the customer deliveries.",
+          "<b>Andon</b> je spôsob, ako si závod pýta pomoc: stroj, ktorý sa pokazí, volá technika (svetlo na stroji a tabuľa v kancelárii výroby). Volanie, ktoré sa nevyrieši včas, <b>eskaluje</b>: po <b>" ~ (rule.foreman_min|int) ~ " minútach</b> príde k stroju majster (úroveň 2) a zorganizuje pomoc (ďalšieho technika, náhradný diel, presun práce); po <b>" ~ (rule.manager_min|int) ~ " minútach</b> príde vedúci výroby (úroveň 3, na rannej zmene; na ostatných mu zavolajú) a rozhodne o dodávkach zákazníkom.") }}
+    {{ bi("<b>Shift meeting:</b> " ~ (rule.meeting_at_min|int) ~ " minutes after the start of every shift the foreman, the technicians and IT (in the morning also the production manager) stand " ~ (rule.meeting_min|int) ~ " minutes in front of the andon board: the open calls, and the last shift's output against the plan of every area. A breakdown during the meeting takes a technician out of it at once.",
+          "<b>Porada zmeny:</b> " ~ (rule.meeting_at_min|int) ~ " minút po začiatku každej zmeny stoja majster, technici a IT (ráno aj vedúci výroby) " ~ (rule.meeting_min|int) ~ " minút pred andon tabuľou: otvorené volania a výkon minulej zmeny oproti plánu po oblastiach. Porucha počas porady technika z nej hneď odvolá.") }}
+    {{ bi("<b>How to read it:</b> top, the calls open now with their timer and level (blue 1 = technician, amber 2 = foreman, red 3 = manager); below, the escalations of the last moments as the plant reported them, and the breakdowns of the last 24 hours that lasted long enough to escalate.",
+          "<b>Ako to čítať:</b> hore volania otvorené práve teraz s časom a úrovňou (modrá 1 = technik, oranžová 2 = majster, červená 3 = vedúci); nižšie eskalácie z posledných chvíľ tak, ako ich závod hlásil, a poruchy za posledných 24 hodín, ktoré trvali dosť dlho na eskaláciu.") }}
+  </div>
+{% endcall %}
+
+<div class="grid-2">
+  <div class="stack">
+    <div class="panel"><h3>{{ bi_inline("Open calls now", "Otvorené volania teraz") }}</h3><div class="table-wrap" id="andon-open"></div></div>
+    <div class="panel"><h3>{{ bi_inline("Escalated breakdowns · last 24 h", "Eskalované poruchy · posledných 24 h") }}</h3><div class="table-wrap" id="andon-history"></div></div>
+  </div>
+  <div class="stack">
+    <div class="panel" id="andon-counts"></div>
+    <div class="panel"><h3>{{ bi_inline("Escalations just now", "Eskalácie práve teraz") }}</h3><div class="table-wrap" id="andon-esc"></div></div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}<script src="/static/andon.js?v={{ version }}"></script>{% endblock %}

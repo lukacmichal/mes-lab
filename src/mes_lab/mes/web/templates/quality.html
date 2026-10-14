@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% from "_help.html" import bi, help %}
+{% block title %}Quality{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Quality</h1>
+  <span class="sub">Defects, repairs, quarantine and scrap</span>
+</div>
+
+{% call help("quality") %}
+  <div class="cols">
+    {{ bi("<b>A defect</b> is recorded when an inspection (AOI, ICT, end-of-line test…) or the station itself (press force, screw torque) finds a problem on a piece. The piece becomes <i>NOK</i> and goes to the repair center. The MES will not let it into the next interlocked station until the defect is closed.",
+          "<b>Chyba</b> sa zapíše, keď kontrola (AOI, ICT, záverečný test…) alebo samotná stanica (lisovacia sila, moment skrutky) nájde na kuse problém. Kus je potom <i>NOK</i> a ide do opravovne. MES ho nepustí na ďalšiu blokujúcu stanicu, kým chyba nie je uzavretá.") }}
+    {{ bi("<b>Repair:</b> a technician repairs the piece or scraps it. After a repair the MES sends the piece back to the station that found the defect, so it is tested again. Repaired boards go back to the supermarket.",
+          "<b>Oprava:</b> technik kus opraví alebo zošrotuje. Po oprave MES pošle kus späť na stanicu, ktorá chybu našla, aby sa otestoval znova. Opravené dosky idú späť do supermarketu.") }}
+    {{ bi("<b>Quarantine</b> holds pieces the MES refused at a check-in: on hold, skipped a step, not repaired. They wait here until you decide: <i>Release</i> sends them back to production, <i>Scrap</i> throws them away. The plant carries out the decision within seconds.",
+          "<b>Karanténa</b> drží kusy, ktoré MES odmietol pri check-ine: blokované, preskočený krok, neopravené. Čakajú tu, kým rozhodneš: <i>Release</i> ich vráti do výroby, <i>Scrap</i> ich vyhodí. Závod rozhodnutie vykoná do pár sekúnd.") }}
+    {{ bi("<b>Defects found · last 24 h</b> is a Pareto chart: the most frequent problem first. That is where improvement work starts.",
+          "<b>Defects found · last 24 h</b> je Paretov graf: najčastejší problém je prvý. Tam sa začína zlepšovanie.") }}
+  </div>
+{% endcall %}
+
+<div class="kpis" id="kpis"></div>
+<div class="grid-2">
+  <div class="stack">
+    <div class="panel"><h3>Quarantine</h3><div id="quarantine"></div></div>
+    <div class="panel"><h3>Waiting for repair · open defects</h3><div id="open"></div></div>
+  </div>
+  <div class="stack">
+    <div class="panel"><h3>Defects found · last 24 h</h3><div id="pareto" class="bars"></div></div>
+    <div class="panel"><h3>Recent repairs</h3><div id="repairs"></div></div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}<script src="/static/quality.js?v={{ version }}"></script>{% endblock %}

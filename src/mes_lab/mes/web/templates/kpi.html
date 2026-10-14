@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% from "_help.html" import bi, bi_inline, help %}
+{% block title %}KPI{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>KPI</h1>
+  <span class="sub">{{ bi_inline("How well the plant runs: OEE, yields, automation, people, robots, cost", "Ako dobre závod beží: OEE, výťažnosť, automatizácia, ľudia, roboty, náklady") }}</span>
+  <div class="spacer"></div>
+  <div class="segmented" id="kpi-window" role="group" aria-label="Time window">
+    <button type="button" data-w="shift">{{ bi_inline("This shift", "Táto zmena") }}</button>
+    <button type="button" data-w="8h">8 h</button>
+    <button type="button" data-w="24h">24 h</button>
+    <button type="button" data-w="7d">{{ bi_inline("7 days", "7 dní") }}</button>
+  </div>
+</div>
+
+{% call help("kpi") %}
+  <div class="cols">
+    {{ bi("<b>OEE</b> (overall equipment effectiveness) = <i>availability × performance × quality</i>, measured at the constraint of a line (the cell with the most work). <i>Availability</i> loses breakdowns, changeovers and planned maintenance; <i>performance</i> loses minor stops, waiting for pieces, a full next buffer and slow cycles; <i>quality</i> is the first pass yield. Time without an order is not planned and does not count. World class is about 85 %.",
+          "<b>OEE</b> (celková efektívnosť zariadení) = <i>dostupnosť × výkon × kvalita</i>, meraná na úzkom hrdle linky (bunka s najviac prácou). <i>Dostupnosť</i> zníži porucha, prestavba a plánovaná údržba; <i>výkon</i> krátke výpadky, čakanie na kusy, plný ďalší buffer a pomalé takty; <i>kvalita</i> je výťažnosť na prvý raz. Čas bez zákazky nie je plánovaný a nepočíta sa. Svetová trieda je okolo 85 %.") }}
+    {{ bi("<b>FPY</b> (first pass yield): the share of pieces that pass every station of a line the first time. <b>RTY</b> (rolled throughput yield) of a product multiplies the FPY of its SMT passes and of its final assembly: the share that went from the bare board to the finished unit without a single repair. <b>Loading</b> tells how much of the time a line had work at all; <b>work content</b> adds up how many lines running flat out the work of an area would need.",
+          "<b>FPY</b> (výťažnosť na prvý raz): podiel kusov, ktoré prejdú všetkými stanicami linky napoprvýkrát. <b>RTY</b> (súhrnná výťažnosť) výrobku násobí FPY jeho prechodov SMT a finálnej montáže: koľko kusov prešlo od holej dosky po hotový výrobok bez jedinej opravy. <b>Vyťaženie zákazkami</b> hovorí, koľko času mala linka vôbec prácu; <b>obsah práce</b> spočíta, koľko liniek bežiacich naplno by práca oblasti potrebovala.") }}
+    {{ bi("<b>Automation degree</b>: the share of the work content done by machines. Manual are loading, the visual final inspection, packing, palletizing, repairs, an operator checking the calls of an inspection and clearing minor stops. <b>Productivity</b>: good units of final assembly per person-hour on site (everybody: operators, relief, technicians, IT, foreman, logistics). <b>MTBF / MTTR</b>: running hours per breakdown and minutes per breakdown, the walk of the technician included.",
+          "<b>Stupeň automatizácie</b>: podiel obsahu práce, ktorý urobia stroje. Ručne sa nakladá, robí vizuálna výstupná kontrola, balí, paletizuje, opravuje, operátor overuje poplachy kontrol a odstraňuje krátke výpadky. <b>Produktivita</b>: dobré kusy finálnej montáže na človekohodinu v závode (všetci: operátori, záskoky, technici, IT, majster, sklad). <b>MTBF / MTTR</b>: hodiny behu na jednu poruchu a minúty na jednu poruchu vrátane cesty technika.") }}
+    {{ bi("<b>Cost of a good unit</b>: people, robots, the lines (depreciation and service, whether they run or not), energy while they run and the material of scrapped pieces, divided by the good units, plus the material of the unit. With the price it gives the margin. The rates are fictional round numbers (config/costs.yaml). The <a href='/tuning'>Tuning</a> page lets you change the plant and see what it does to these numbers.",
+          "<b>Náklady na dobrý kus</b>: ľudia, roboty, linky (odpisy a servis, či bežia alebo nie), energia, kým bežia, a materiál zošrotovaných kusov, vydelené dobrými kusmi, plus materiál kusa. S cenou dávajú maržu. Sadzby sú vymyslené okrúhle čísla (config/costs.yaml). Na stránke <a href='/tuning'>Tuning</a> môžeš závod zmeniť a vidieť, čo to s týmito číslami urobí.") }}
+  </div>
+{% endcall %}
+
+<div class="muted" id="kpi-when" style="margin:-6px 0 10px"></div>
+<div class="kpis" id="kpi-tiles"></div>
+
+<div class="grid-2">
+  <div class="stack">
+    <div class="panel">
+      <h3>{{ bi_inline("Lines", "Linky") }}</h3>
+      <div class="table-wrap"><table id="kpi-lines"></table></div>
+      <div class="legend kpi-legend" id="kpi-legend"></div>
+    </div>
+    <div class="panel">
+      <h3>{{ bi_inline("Products", "Výrobky") }}</h3>
+      <div class="table-wrap"><table id="kpi-products"></table></div>
+    </div>
+  </div>
+  <div class="stack">
+    <div class="panel">
+      <h3>{{ bi_inline("Capacity", "Kapacita") }}</h3>
+      <div id="kpi-capacity"></div>
+    </div>
+    <div class="panel">
+      <h3>{{ bi_inline("Cost and margin", "Náklady a marža") }}</h3>
+      <div id="kpi-costs"></div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}<script src="/static/kpi.js?v={{ version }}"></script>{% endblock %}

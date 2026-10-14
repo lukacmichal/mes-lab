@@ -1,0 +1,431 @@
+# Station (equipment) types and how they behave in the simulation.
+#
+# kind:
+#   loader      - first station of a job line; releases panels/units into the line
+#   process     - works on the item, may introduce defects (optionally self-detected)
+#   inspection  - finds defects (detects: probability per defect code) and raises
+#                 false calls; flagged pieces are verified by an operator (verify_s)
+#   oven        - conveyor oven: several items inside at once (capacity, transit_s)
+#   depanel     - splits a panel into boards
+#   pack        - groups items into a container (KLT box or pallet)
+#   repair      - offline repair bench (repair: mean_min, cv, success)
+#
+# Times: cycle times live in the product routings (config/products.yaml).
+# cycle_cv adds machine/operator variability on top of the ideal cycle time.
+# mtbf_h counts operating hours only. mttr_min is the mean repair time.
+# defects: probability per piece (board or unit) that this station introduces
+#   the defect; self_detect is the chance the station itself notices it
+#   (force curve, torque/angle window, flash verify).
+# manual: a person does the work (the others are machines; see the automation degree on the KPI page)
+# interlock: the station checks every item in with the MES before working on it
+#   (route, holds, quality status) and gets serial numbers from it.
+# measurements: process values logged with every record (mean, sd, limits).
+
+station_types:
+
+  # ---------------------------------------------------------------- SMT
+  LOADER:
+    name: Magazine loader
+    tag: LDR
+    kind: loader
+    interlock: true
+    cycle_cv: 0.02
+    mtbf_h: 120
+    mttr_min: 8
+    microstop: {p: 0.002, mean_s: 30}
+    changeover_min: 2
+    failures: [CONVEYOR_JAM, SENSOR_FAULT]
+
+  LASER_PCB:
+    name: PCB laser marker
+    tag: LSR
+    kind: process
+    interlock: true
+    cycle_cv: 0.02
+    mtbf_h: 150
+    mttr_min: 20
+    changeover_min: 2
+    failures: [LASER_SOURCE_FAULT, VISION_ERROR, CONVEYOR_JAM]
+
+  PASTE_PRINTER:
+    name: Solder paste printer
+    tag: PRN
+    kind: process
+    cycle_cv: 0.03
+    mtbf_h: 30
+    mttr_min: 25
+    microstop: {p: 0.012, mean_s: 45}
+    changeover_min: 12
+    pm: {interval_h: 168, duration_min: 45}
+    failures: [STENCIL_CLOGGED, SQUEEGEE_FAULT, VISION_ERROR, CONVEYOR_JAM]
+    defects:
+      INSUFFICIENT_PASTE: 0.0030
+      PASTE_BRIDGE: 0.0015
+      PASTE_OFFSET: 0.0010
+
+  SPI:
+    name: Solder paste inspection (3D)
+    tag: SPI
+    kind: inspection
+    measurements:
+      paste_volume_pct: {mean: 100, sd: 5, lsl: 70, usl: 130, unit: '%'}
+    cycle_cv: 0.02
+    mtbf_h: 120
+    mttr_min: 15
+    changeover_min: 3
+    failures: [CAMERA_FAULT, CONVEYOR_JAM]
+    false_call_rate: 0.006
+    verify_s: 25
+    on_reject: wash          # misprinted panel is washed and printed again
+    wash_min: 12
+    detects:
+      INSUFFICIENT_PASTE: 0.95
+      PASTE_BRIDGE: 0.95
+      PASTE_OFFSET: 0.90
+
+  PNP_CHIP:
+    name: Pick-and-place (chip shooter)
+    tag: PP1
+    kind: process
+    cycle_cv: 0.03
+    mtbf_h: 25
+    mttr_min: 20
+    microstop: {p: 0.03, mean_s: 40}
+    changeover_min: 18
+    pm: {interval_h: 160, duration_min: 60}
+    failures: [NOZZLE_CLOG, FEEDER_FAULT, VISION_ERROR, HEAD_SERVO_FAULT]
+    defects:
+      MISSING_COMPONENT: 0.0015
+      SHIFTED_COMPONENT: 0.0020
+      WRONG_COMPONENT: 0.0001
+      COMPONENT_FAULT: 0.0003
+
+  PNP_IC:
+    name: Pick-and-place (fine pitch / ICs)
+    tag: PP2
+    kind: process
+    cycle_cv: 0.03
+    mtbf_h: 30
+    mttr_min: 25
+    microstop: {p: 0.02, mean_s: 50}
+    changeover_min: 15
+    pm: {interval_h: 160, duration_min: 60}
+    failures: [NOZZLE_CLOG, FEEDER_FAULT, VISION_ERROR, HEAD_SERVO_FAULT]
+    defects:
+      MISSING_COMPONENT: 0.0005
+      SHIFTED_COMPONENT: 0.0015
+      WRONG_POLARITY: 0.0004
+      COMPONENT_FAULT: 0.0002
+
+  REFLOW_OVEN:
+    name: Reflow oven (10 zones, N2)
+    tag: OVN
+    kind: oven
+    measurements:
+      peak_temp_c: {mean: 245, sd: 1.5, lsl: 235, usl: 255, unit: degC}
+      time_above_liquidus_s: {mean: 62, sd: 3, lsl: 45, usl: 90, unit: s}
+    transit_s: 330
+    capacity: 8
+    mtbf_h: 300
+    mttr_min: 45
+    changeover_min: 5
+    failures: [HEATER_ZONE_FAULT, CONVEYOR_JAM, PLC_FAULT]
+    defects:
+      SOLDER_BRIDGE: 0.0008
+      COLD_JOINT: 0.0005
+      TOMBSTONE: 0.0004
+      VOIDING: 0.0003
+
+  AOI:
+    name: Automated optical inspection (3D)
+    tag: AOI
+    kind: inspection
+    cycle_cv: 0.02
+    mtbf_h: 100
+    mttr_min: 15
+    changeover_min: 3
+    failures: [CAMERA_FAULT, CONVEYOR_JAM]
+    false_call_rate: 0.025
+    verify_s: 15
+    on_reject: bad_mark      # defective board gets a bad mark and is repaired after depaneling
+    detects:
+      INSUFFICIENT_PASTE: 0.80
+      PASTE_BRIDGE: 0.80
+      PASTE_OFFSET: 0.60
+      MISSING_COMPONENT: 0.98
+      SHIFTED_COMPONENT: 0.92
+      WRONG_POLARITY: 0.95
+      WRONG_COMPONENT: 0.50
+      SOLDER_BRIDGE: 0.95
+      COLD_JOINT: 0.60
+      TOMBSTONE: 0.97
+
+  UNLOADER:
+    name: Magazine unloader
+    tag: ULD
+    kind: process
+    cycle_cv: 0.02
+    mtbf_h: 120
+    mttr_min: 8
+    microstop: {p: 0.002, mean_s: 30}
+    changeover_min: 2
+    failures: [CONVEYOR_JAM, SENSOR_FAULT]
+
+  DEPANELER:
+    name: Router depaneler
+    tag: DPN
+    kind: depanel
+    cycle_cv: 0.03
+    mtbf_h: 60
+    mttr_min: 20
+    microstop: {p: 0.005, mean_s: 40}
+    changeover_min: 6
+    failures: [ROUTER_BIT_BROKEN, VISION_ERROR, SAFETY_DOOR]
+    defects:
+      DEPANEL_DAMAGE: 0.0003
+
+  # ---------------------------------------------------------------- Final assembly
+  FA_LOADER:
+    name: PCBA loading (manual)
+    manual: true             # a person does the work (counts as manual in the automation degree)
+    tag: LDR
+    kind: loader
+    cycle_cv: 0.15
+    microstop: {p: 0.005, mean_s: 60}
+    changeover_min: 1
+
+  PRESS_FIT:
+    name: Connector press-fit
+    tag: PRS
+    kind: process
+    measurements:
+      press_force_kn: {mean: 2.4, sd: 0.08, lsl: 2.0, usl: 2.8, unit: kN}
+    cycle_cv: 0.03
+    mtbf_h: 50
+    mttr_min: 30
+    microstop: {p: 0.004, mean_s: 40}
+    changeover_min: 10
+    failures: [PRESS_FORCE_FAULT, SAFETY_DOOR, PLC_FAULT]
+    defects:
+      BENT_PIN: {p: 0.0025, self_detect: 0.90}
+
+  COATER:
+    name: Selective conformal coater
+    tag: CTR
+    kind: process
+    measurements:
+      coating_weight_mg: {mean: 120, sd: 6, lsl: 100, usl: 140, unit: mg}
+    cycle_cv: 0.03
+    mtbf_h: 40
+    mttr_min: 30
+    microstop: {p: 0.010, mean_s: 60}
+    changeover_min: 8
+    failures: [DISPENSE_VALVE_FAULT, CONVEYOR_JAM, VISION_ERROR]
+    defects:
+      COATING_VOID: 0.0040
+      COATING_ON_CONNECTOR: 0.0015
+
+  UV_CURE:
+    name: UV curing tunnel
+    tag: UVC
+    kind: oven
+    transit_s: 90
+    capacity: 5
+    mtbf_h: 300
+    mttr_min: 20
+    failures: [UV_LAMP_FAULT, CONVEYOR_JAM]
+
+  COATING_AOI:
+    name: Coating inspection (UV camera)
+    tag: CAO
+    kind: inspection
+    cycle_cv: 0.02
+    mtbf_h: 150
+    mttr_min: 15
+    changeover_min: 2
+    failures: [CAMERA_FAULT, CONVEYOR_JAM]
+    false_call_rate: 0.015
+    verify_s: 20
+    on_reject: repair
+    detects:
+      COATING_VOID: 0.92
+      COATING_ON_CONNECTOR: 0.95
+
+  POTTING:
+    name: Potting dispenser (2K)
+    tag: POT
+    kind: process
+    cycle_cv: 0.03
+    mtbf_h: 40
+    mttr_min: 35
+    microstop: {p: 0.010, mean_s: 60}
+    changeover_min: 10
+    failures: [DISPENSE_VALVE_FAULT, CONVEYOR_JAM, PLC_FAULT]
+    defects:
+      POTTING_VOID: 0.0030
+      POTTING_OVERFLOW: 0.0010
+
+  CURING_OVEN:
+    name: Potting cure oven
+    tag: CUR
+    kind: oven
+    measurements:
+      cure_temp_c: {mean: 80, sd: 0.8, lsl: 75, usl: 85, unit: degC}
+    transit_s: 2400
+    capacity: 90
+    mtbf_h: 500
+    mttr_min: 60
+    failures: [HEATER_ZONE_FAULT, CONVEYOR_JAM]
+
+  ICT:
+    name: In-circuit tester
+    tag: ICT
+    kind: inspection
+    interlock: true
+    cycle_cv: 0.02
+    mtbf_h: 50
+    mttr_min: 30
+    microstop: {p: 0.004, mean_s: 45}
+    changeover_min: 15
+    failures: [FIXTURE_FAULT, PROBE_WORN, TESTER_FAULT]
+    false_call_rate: 0.012
+    verify_s: 40             # operator retest
+    on_reject: repair
+    detects:
+      MISSING_COMPONENT: 0.99
+      WRONG_COMPONENT: 0.95
+      WRONG_POLARITY: 0.90
+      SHIFTED_COMPONENT: 0.50
+      SOLDER_BRIDGE: 0.98
+      COLD_JOINT: 0.70
+      TOMBSTONE: 0.95
+      COMPONENT_FAULT: 0.60
+      BENT_PIN: 0.50
+      INSUFFICIENT_PASTE: 0.40
+
+  SCREWDRIVER:
+    name: Housing assembly and screwing
+    tag: SCR
+    kind: process
+    measurements:
+      torque_nm: {mean: 1.2, sd: 0.03, lsl: 1.05, usl: 1.35, unit: Nm}
+      angle_deg: {mean: 720, sd: 12, lsl: 660, usl: 780, unit: deg}
+    cycle_cv: 0.04
+    mtbf_h: 40
+    mttr_min: 20
+    microstop: {p: 0.025, mean_s: 30}
+    changeover_min: 8
+    failures: [SCREW_FEED_JAM, SPINDLE_FAULT, SAFETY_DOOR]
+    defects:
+      SCREW_NOK: {p: 0.0040, self_detect: 1.0}
+
+  FLASHER:
+    name: Software flashing station
+    tag: FLS
+    kind: process
+    cycle_cv: 0.05
+    mtbf_h: 80
+    mttr_min: 15
+    microstop: {p: 0.004, mean_s: 60}
+    changeover_min: 3
+    failures: [PROGRAMMER_FAULT, NETWORK_FAULT]
+    defects:
+      FLASH_FAIL: {p: 0.0030, self_detect: 1.0}
+
+  EOL_TESTER:
+    name: End-of-line functional tester
+    tag: EOL
+    kind: inspection
+    interlock: true
+    measurements:
+      supply_current_ma: {mean: 85, sd: 2.5, lsl: 75, usl: 95, unit: mA}
+    cycle_cv: 0.03
+    mtbf_h: 50
+    mttr_min: 30
+    microstop: {p: 0.004, mean_s: 60}
+    changeover_min: 10
+    failures: [TESTER_FAULT, FIXTURE_FAULT, NETWORK_FAULT]
+    false_call_rate: 0.006
+    verify_s: 60             # operator retest
+    on_reject: repair
+    detects:
+      MISSING_COMPONENT: 0.90
+      WRONG_COMPONENT: 0.95
+      WRONG_POLARITY: 0.95
+      SOLDER_BRIDGE: 0.90
+      COLD_JOINT: 0.60
+      COMPONENT_FAULT: 0.97
+      BENT_PIN: 0.95
+      VOIDING: 0.10
+      DEPANEL_DAMAGE: 0.30
+      INSUFFICIENT_PASTE: 0.50
+
+  LASER_UNIT:
+    name: Housing laser marker
+    tag: LSU
+    kind: process
+    interlock: true
+    cycle_cv: 0.02
+    mtbf_h: 150
+    mttr_min: 20
+    changeover_min: 2
+    failures: [LASER_SOURCE_FAULT, VISION_ERROR]
+
+  FINAL_INSPECTION:
+    name: Final visual inspection
+    manual: true             # a person does the work (counts as manual in the automation degree)
+    tag: FIN
+    kind: inspection
+    interlock: true
+    cycle_cv: 0.20
+    microstop: {p: 0.005, mean_s: 60}
+    changeover_min: 1
+    false_call_rate: 0.003
+    verify_s: 30
+    on_reject: repair
+    detects:
+      COATING_ON_CONNECTOR: 0.50
+      POTTING_OVERFLOW: 0.90
+      POTTING_VOID: 0.60
+      DEPANEL_DAMAGE: 0.40
+
+  # ---------------------------------------------------------------- Packing
+  PACK_SCAN:
+    name: Scan and pack into KLT
+    manual: true             # a person does the work (counts as manual in the automation degree)
+    tag: PCK
+    kind: pack
+    interlock: true
+    container: klt
+    default_cycle_s: 5
+    cycle_cv: 0.20
+    microstop: {p: 0.003, mean_s: 60}
+
+  BOX_LABEL:
+    name: KLT label printer (VDA 4902)
+    tag: LBL
+    kind: process
+    default_cycle_s: 15
+    cycle_cv: 0.05
+    mtbf_h: 150
+    mttr_min: 10
+    failures: [PRINTER_FAULT, NETWORK_FAULT]
+
+  PALLETIZER:
+    name: Palletizing (manual)
+    manual: true             # a person does the work (counts as manual in the automation degree)
+    tag: PAL
+    kind: pack
+    interlock: true
+    container: pallet
+    default_cycle_s: 20
+    cycle_cv: 0.20
+
+  # ---------------------------------------------------------------- Repair
+  REPAIR_BENCH:
+    name: Repair and analysis bench
+    manual: true             # a person does the work (counts as manual in the automation degree)
+    tag: RPB
+    kind: repair
+    failures: [TOOL_FAULT]
+    repair: {mean_min: 18, cv: 0.5, success: 0.88}

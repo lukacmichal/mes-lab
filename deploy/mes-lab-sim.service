@@ -1,0 +1,21 @@
+[Unit]
+Description=MES lab - plant simulation (ACME Plant 1)
+After=mes-lab-mes.service
+Wants=mes-lab-mes.service
+
+[Service]
+User=mes
+Group=mes
+EnvironmentFile=/etc/mes-lab/mes.env
+WorkingDirectory=/opt/mes-lab/app
+ExecStart=/opt/mes-lab/venv/bin/python -m mes_lab.sim run --speed ${SIM_SPEED}
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

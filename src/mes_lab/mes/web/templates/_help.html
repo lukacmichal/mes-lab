@@ -1,0 +1,18 @@
+{# Bilingual helpers. Both languages sit in one grid cell, the other one is only
+   hidden, so switching never moves the page. #}
+
+{% macro bi(en, sk, tag="p", cls="") -%}
+<div class="bi {{ cls }}"><{{ tag }} lang="en">{{ en|safe }}</{{ tag }}><{{ tag }} lang="sk">{{ sk|safe }}</{{ tag }}></div>
+{%- endmacro %}
+
+{% macro bi_inline(en, sk) -%}
+<span class="bi-inline"><span lang="en">{{ en|safe }}</span><span lang="sk">{{ sk|safe }}</span></span>
+{%- endmacro %}
+
+{% macro help(id) -%}
+<details class="help" id="help-{{ id }}" open>
+  <summary>{{ bi_inline("How to read this page", "Ako čítať túto stránku") }}
+    <span class="faint">· <a href="/guide">{{ bi_inline("full guide", "celý sprievodca") }}</a></span></summary>
+  <div class="help-body">{{ caller() }}</div>
+</details>
+{%- endmacro %}

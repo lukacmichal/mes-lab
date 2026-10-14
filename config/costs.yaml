@@ -1,0 +1,19 @@
+# What the plant costs and earns (fictional, round numbers in EUR, near what a plant of this kind in
+# central Europe pays). Used by the KPI page (cost of a good unit) and by the tuning game.
+#
+# labor_per_h  - a person, fully loaded (wage, social insurance, overhead), per hour on site
+# robot_per_h  - an AMR: lease, service and fleet software, per robot and hour
+# line_per_h   - a line whether it runs or not: depreciation, service contracts, floor space
+# energy_per_h - a line while its machines run (ovens, compressed air, nitrogen at the reflow ovens)
+# material     - components, PCB and housing of one finished unit (lost when the unit is scrapped)
+# price        - what the customer pays for one unit
+# hold_per_h   - a unit in stock or in work ties up money and space (per unit and hour)
+costs:
+  currency: EUR
+  labor_per_h: {OPERATOR: 21.0, MAINTENANCE: 29.0, IT: 31.0, FOREMAN: 34.0, LOGISTICS: 21.0, MANAGER: 52.0}
+  robot_per_h: 2.4
+  line_per_h: {SMT: 92.0, FA: 36.0, PACK: 9.0, REPAIR: 4.0}
+  energy_per_h: {SMT: 21.0, FA: 7.0, PACK: 1.0, REPAIR: 0.5}
+  material: {BCM-200: 33.0, LED-DRV-40: 12.0, BMS-12S: 20.5, PDC-8: 15.5}
+  price: {BCM-200: 44.0, LED-DRV-40: 17.0, BMS-12S: 27.0, PDC-8: 21.5}
+  hold_per_h: 0.0005

@@ -1,0 +1,123 @@
+# ACME Automotive Electronics, Plant 1 - a fictional plant.
+# Equipment hierarchy follows ISA-95: enterprise > site > area > line > station.
+
+plant:
+  code: P1
+  name: ACME Automotive Electronics - Plant 1
+  company: ACME Automotive Electronics
+  timezone: Europe/Bratislava
+  plan_efficiency: 0.85     # hour-by-hour plan of a line: the ideal rate of its constraint times this
+
+shifts:
+  - {code: A, name: Morning,   start: "06:00", end: "14:00"}
+  - {code: B, name: Afternoon, start: "14:00", end: "22:00"}
+  - {code: C, name: Night,     start: "22:00", end: "06:00"}
+
+# A template is the physical layout of a line: station types in flow order.
+# "{type: X, count: 2}" is a cell of two identical stations sharing the conveyor.
+# buffer = conveyor places between two cells.
+# output = station type whose good count is the line output (hour-by-hour board).
+line_templates:
+  SMT:
+    buffer: 2
+    output: DEPANELER
+    stations: [LOADER, LASER_PCB, PASTE_PRINTER, SPI, PNP_CHIP, PNP_IC, REFLOW_OVEN, AOI, UNLOADER, DEPANELER]
+  FA_BCM:
+    buffer: 3
+    output: FINAL_INSPECTION
+    stations:
+      - FA_LOADER
+      - PRESS_FIT
+      - COATER
+      - UV_CURE
+      - COATING_AOI
+      - ICT
+      - SCREWDRIVER
+      - {type: FLASHER, count: 2}
+      - {type: EOL_TESTER, count: 2}
+      - LASER_UNIT
+      - FINAL_INSPECTION
+  FA_LED:
+    buffer: 3
+    output: FINAL_INSPECTION
+    stations:
+      - FA_LOADER
+      - POTTING
+      - CURING_OVEN
+      - {type: EOL_TESTER, count: 2}
+      - LASER_UNIT
+      - FINAL_INSPECTION
+  FA_BMS:
+    buffer: 3
+    output: FINAL_INSPECTION
+    stations:
+      - FA_LOADER
+      - COATER
+      - UV_CURE
+      - COATING_AOI
+      - ICT
+      - {type: EOL_TESTER, count: 2}
+      - LASER_UNIT
+      - FINAL_INSPECTION
+  FA_PDC:
+    buffer: 3
+    output: FINAL_INSPECTION
+    stations:
+      - FA_LOADER
+      - SCREWDRIVER
+      - {type: FLASHER, count: 2}
+      - {type: EOL_TESTER, count: 2}
+      - LASER_UNIT
+      - FINAL_INSPECTION
+  PACK:
+    buffer: 4
+    output: PACK_SCAN
+    stations: [PACK_SCAN, BOX_LABEL, PALLETIZER]
+  REPAIR:
+    buffer: 0
+    output: REPAIR_BENCH
+    stations:
+      - {type: REPAIR_BENCH, count: 4}
+
+# Area kind decides how lines run:
+#   SMT, FA         - job lines: run work orders dispatched by the MES
+#   PACK, REPAIR    - flow lines: process whatever arrives
+#   WAREHOUSE       - storage only
+areas:
+  - code: SMT
+    name: Surface mount (SMT)
+    kind: SMT
+    lines:
+      - {code: SMT-01, name: SMT line 1, template: SMT}
+      - {code: SMT-02, name: SMT line 2, template: SMT}
+      - {code: SMT-03, name: SMT line 3, template: SMT}
+      - {code: SMT-04, name: SMT line 4, template: SMT}
+      - {code: SMT-05, name: SMT line 5, template: SMT}
+
+  - code: FA
+    name: Final assembly
+    kind: FA
+    lines:
+      - {code: FA-01, name: Final assembly 1 - BCM, template: FA_BCM, materials: [BCM-200]}
+      - {code: FA-02, name: Final assembly 2 - BCM, template: FA_BCM, materials: [BCM-200]}
+      - {code: FA-03, name: Final assembly 3 - LED, template: FA_LED, materials: [LED-DRV-40]}
+      - {code: FA-04, name: Final assembly 4 - BMS, template: FA_BMS, materials: [BMS-12S]}
+      - {code: FA-05, name: Final assembly 5 - PDC, template: FA_PDC, materials: [PDC-8]}
+
+  - code: PACK
+    name: Packing
+    kind: PACK
+    lines:
+      - {code: PACK-01, name: Packing 1, template: PACK, materials: [BCM-200, LED-DRV-40]}
+      - {code: PACK-02, name: Packing 2, template: PACK, materials: [BMS-12S, PDC-8]}
+
+  - code: RPR
+    name: Repair and analysis
+    kind: REPAIR
+    lines:
+      - {code: RPR-01, name: Repair center, template: REPAIR}
+
+  - code: WH
+    name: Finished goods warehouse and shipping
+    kind: WAREHOUSE
+    lines: []

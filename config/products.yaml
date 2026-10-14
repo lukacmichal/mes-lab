@@ -1,0 +1,149 @@
+# Customers, materials (finished goods and PCB assemblies) and their routings.
+#
+# A routing is a list of operations. One operation = one pass through one line:
+#   SMT_BOT / SMT_TOP - one side of the panel on an SMT line (double-sided boards
+#                       run bottom side first, then top side on the same line)
+#   FA                - final assembly line
+# steps: station type -> ideal cycle time in seconds per handling unit
+#   (per panel on SMT, per unit in final assembly). Station types of the line
+#   that are not listed are passed through on the conveyor.
+#
+# planning (PCBA): the demo planner keeps the SMT supermarket above safety_stock
+#   and splits SMT orders into lots between min_lot and max_lot (boards).
+# planning (FG): final assembly order sizes are picked from lot_sizes (units).
+#
+# Sizes in millimetres (the live plan draws pieces with them):
+#   panel_mm / panel_grid (PCBA): the panel and how its boards sit on it (across x down)
+#   unit_mm (FG): the finished product, length x width x height
+#   kit (FG): the parts final assembly adds to one unit; they come in bins of per_bin sets, which the
+#             robots bring from the goods-in warehouse to the rack at the loader (two-bin kanban)
+#   packing.klt_mm: the KLT box; packing.pallet_mm / pallet_type: the pallet (EUR 1200 x 800, CP1 1200 x 1000)
+
+customers:
+  - {code: KRAFTWAGEN, name: Kraftwagen AG, country: DE}
+  - {code: NORDAUTO,   name: Nordauto AB, country: SE}
+  - {code: VOLTARO,    name: Voltaro Mobility s.r.o., country: CZ}
+
+materials:
+
+  # ------------------------------------------------------------- PCB assemblies
+  - code: PCBA-BCM-200
+    name: BCM-200 PCB assembly
+    kind: PCBA
+    boards_per_panel: 4
+    panel_mm: [280, 220]
+    panel_grid: [2, 2]
+    planning: {safety_stock: 1200, initial_stock: 1200, min_lot: 480, max_lot: 720}
+    routing:
+      - op: SMT_BOT
+        name: SMT bottom side
+        steps: {LOADER: 8, LASER_PCB: 16, PASTE_PRINTER: 24, SPI: 20, PNP_CHIP: 42, PNP_IC: 34,
+                REFLOW_OVEN: 30, AOI: 28, UNLOADER: 8}
+      - op: SMT_TOP
+        name: SMT top side
+        steps: {LOADER: 8, PASTE_PRINTER: 24, SPI: 20, PNP_CHIP: 50, PNP_IC: 52,
+                REFLOW_OVEN: 30, AOI: 34, UNLOADER: 8, DEPANELER: 40}
+
+  - code: PCBA-LED-DRV-40
+    name: LED-DRV-40 PCB assembly
+    kind: PCBA
+    boards_per_panel: 8
+    panel_mm: [330, 160]
+    panel_grid: [4, 2]
+    planning: {safety_stock: 500, initial_stock: 500, min_lot: 800, max_lot: 800}
+    routing:
+      - op: SMT_TOP
+        name: SMT top side
+        steps: {LOADER: 8, LASER_PCB: 22, PASTE_PRINTER: 22, SPI: 18, PNP_CHIP: 45, PNP_IC: 30,
+                REFLOW_OVEN: 30, AOI: 30, UNLOADER: 8, DEPANELER: 40}
+
+  - code: PCBA-BMS-12S
+    name: BMS-12S PCB assembly
+    kind: PCBA
+    boards_per_panel: 2
+    panel_mm: [200, 110]
+    panel_grid: [2, 1]
+    planning: {safety_stock: 500, initial_stock: 500, min_lot: 240, max_lot: 360}
+    routing:
+      - op: SMT_BOT
+        name: SMT bottom side
+        steps: {LOADER: 8, LASER_PCB: 12, PASTE_PRINTER: 22, SPI: 18, PNP_CHIP: 34, PNP_IC: 26,
+                REFLOW_OVEN: 30, AOI: 26, UNLOADER: 8}
+      - op: SMT_TOP
+        name: SMT top side
+        steps: {LOADER: 8, PASTE_PRINTER: 22, SPI: 18, PNP_CHIP: 46, PNP_IC: 48,
+                REFLOW_OVEN: 30, AOI: 30, UNLOADER: 8, DEPANELER: 24}
+
+  - code: PCBA-PDC-8
+    name: PDC-8 PCB assembly
+    kind: PCBA
+    boards_per_panel: 6
+    panel_mm: [300, 190]
+    panel_grid: [3, 2]
+    planning: {safety_stock: 500, initial_stock: 500, min_lot: 600, max_lot: 600}
+    routing:
+      - op: SMT_TOP
+        name: SMT top side
+        steps: {LOADER: 8, LASER_PCB: 20, PASTE_PRINTER: 24, SPI: 20, PNP_CHIP: 50, PNP_IC: 70,
+                REFLOW_OVEN: 30, AOI: 32, UNLOADER: 8, DEPANELER: 40}
+
+  # ------------------------------------------------------------- Finished goods
+  - code: BCM-200
+    name: Body control module BCM-200
+    kind: FG
+    customer: KRAFTWAGEN
+    pcba: PCBA-BCM-200
+    unit_mm: [140, 100, 38]
+    packing: {klt_qty: 24, klt_per_pallet: 40, klt_mm: [400, 300, 147], pallet_mm: [1200, 800], pallet_type: EUR}
+    kit: {name: "housing, cover and connector", per_bin: 24}
+    planning: {lot_sizes: [480, 720, 960]}
+    routing:
+      - op: FA
+        name: Final assembly
+        steps: {FA_LOADER: 8, PRESS_FIT: 18, COATER: 30, UV_CURE: 20, COATING_AOI: 15, ICT: 30,
+                SCREWDRIVER: 34, FLASHER: 68, EOL_TESTER: 56, LASER_UNIT: 12, FINAL_INSPECTION: 16}
+
+  - code: LED-DRV-40
+    name: LED headlamp driver LED-DRV-40
+    kind: FG
+    customer: NORDAUTO
+    pcba: PCBA-LED-DRV-40
+    unit_mm: [95, 60, 28]
+    packing: {klt_qty: 40, klt_per_pallet: 40, klt_mm: [300, 200, 147], pallet_mm: [1200, 800], pallet_type: EUR}
+    kit: {name: "housing and potting cup", per_bin: 40}
+    planning: {lot_sizes: [800, 1200]}
+    routing:
+      - op: FA
+        name: Final assembly
+        steps: {FA_LOADER: 6, POTTING: 36, CURING_OVEN: 25, EOL_TESTER: 50, LASER_UNIT: 12,
+                FINAL_INSPECTION: 14}
+
+  - code: BMS-12S
+    name: Battery management board BMS-12S
+    kind: FG
+    customer: VOLTARO
+    pcba: PCBA-BMS-12S
+    unit_mm: [190, 55, 16]
+    packing: {klt_qty: 12, klt_per_pallet: 32, klt_mm: [600, 400, 120], pallet_mm: [1200, 800], pallet_type: EUR}
+    kit: {name: "connector and spacers", per_bin: 30}
+    planning: {lot_sizes: [240, 360, 480]}
+    routing:
+      - op: FA
+        name: Final assembly
+        steps: {FA_LOADER: 8, COATER: 34, UV_CURE: 20, COATING_AOI: 16, ICT: 38, EOL_TESTER: 70,
+                LASER_UNIT: 12, FINAL_INSPECTION: 18}
+
+  - code: PDC-8
+    name: Park distance control unit PDC-8
+    kind: FG
+    customer: NORDAUTO
+    pcba: PCBA-PDC-8
+    unit_mm: [110, 85, 32]
+    packing: {klt_qty: 30, klt_per_pallet: 40, klt_mm: [400, 300, 147], pallet_mm: [1200, 1000], pallet_type: CP1}
+    kit: {name: "housing, cover and screws", per_bin: 30}
+    planning: {lot_sizes: [600, 900]}
+    routing:
+      - op: FA
+        name: Final assembly
+        steps: {FA_LOADER: 6, SCREWDRIVER: 30, FLASHER: 56, EOL_TESTER: 48, LASER_UNIT: 12,
+                FINAL_INSPECTION: 14}

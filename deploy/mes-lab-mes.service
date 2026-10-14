@@ -1,0 +1,23 @@
+[Unit]
+Description=MES lab - MES web application
+After=network-online.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+User=mes
+Group=mes
+EnvironmentFile=/etc/mes-lab/mes.env
+Environment=MES_VAR_DIR=/opt/mes-lab/var
+WorkingDirectory=/opt/mes-lab/app
+ExecStart=/opt/mes-lab/venv/bin/python -m mes_lab.mes serve --host 127.0.0.1 --port 8070
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/mes-lab/var
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

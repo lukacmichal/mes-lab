@@ -6,6 +6,9 @@ FastAPI + PostgreSQL web application. Everything is fictional:
 **ACME Automotive Electronics, Plant 1** builds body control modules, LED drivers,
 battery management boards and park distance control units for invented customers.
 
+**Live:** https://152.70.49.202.sslip.io — anybody can look around; changing anything needs a
+signed-in user.
+
 ![The plant seen from above, live](docs/floor.jpg)
 
 ## What runs where

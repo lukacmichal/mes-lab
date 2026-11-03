@@ -30,6 +30,7 @@ from mes_lab.model.schema import AreaKind
 
 from .traffic import keep_seconds
 from .core import Item
+from .station import MATERIAL_TYPES
 
 if TYPE_CHECKING:
     from .plant import PlantSim
@@ -48,6 +49,8 @@ def describe(plant: PlantSim, item: Item) -> dict:
         d["p"] = item.material
     if item.serial:
         d["sn"] = item.serial
+    if item.belt is not None and item.belt[1] > plant.env.now - keep_seconds(plant.speed):
+        d["bt"] = [round(item.belt[0], 1), round(item.belt[1], 1)]   # its last ride on a conveyor of the line
     if kind == "PANEL":
         d["n"] = len(item.children)
         bad = [i for i, board in enumerate(item.children) if board.bad_mark]
@@ -101,12 +104,19 @@ def station_entry(plant: PlantSim, st: Station) -> dict:
     if st.phase in ("work", "verify"):
         total, left = st.work_state()
         e["w"] = [round(total, 1), round(left, 1)]
+    if st.changeover is not None:                            # (length, seconds still to go)
+        start, length = st.changeover
+        e["co"] = [round(length, 1), round(max(0.0, start + length - plant.env.now), 1)]
     inside = getattr(st, "inside_items", None)
     if inside:      # how far through the tunnel each piece is (0..1); the belt may stand still
         belt = st.belt_time()
         run = st.type.transit_s
         e["ov"] = [[describe(plant, i), round(min(1.0, (belt - t) / run), 3)] for i, t in inside]
         e["belt"] = 1 if st.belt_since is not None else 0
+    if getattr(st, "golden", False):
+        e["gs"] = 1                                          # the master sample is in the tester
+    if st.type.code in MATERIAL_TYPES:
+        e.update(plant.material.station_entry(st))           # the reels on the feeders, the paste jar
     if st.call is not None:
         c = st.call
         e["cr"] = {"k": "call", "ph": c.ph, "p": c.person.id if c.person else None, "role": c.role[:3]}
@@ -119,6 +129,19 @@ def station_entry(plant: PlantSim, st: Station) -> dict:
         size = (packing.klt_qty if st.type.container == "klt" else packing.klt_per_pallet) if packing else 0
         e["fill"] = [len(box.children), size, box.serial]
     return e
+
+
+def _back_at_loader(plant: PlantSim) -> dict[str, int]:
+    """Panels in the second magazine of an SMT loader: back from the first side (they came underneath
+    the machines) or from the washer, waiting to go round again."""
+    out: dict[str, int] = {}
+    for store in plant.side_stores.values():
+        for panel in store.items:
+            out[panel.job.line_code] = out.get(panel.job.line_code, 0) + 1
+    for code, line in plant.lines.items():
+        if line.rework.items and line.spec.area_kind == AreaKind.SMT:
+            out[code] = out.get(code, 0) + len(line.rework.items)
+    return out
 
 
 def snapshot(plant: PlantSim) -> dict:
@@ -162,9 +185,12 @@ def snapshot(plant: PlantSim) -> dict:
         "trh": ended,
         "feed": {code: _queue(plant, list(store.items)) for code, store in plant.feed.items()},
         "panels": {code: int(rack.level) for code, rack in plant.panel_rack.items()},
+        "side": _back_at_loader(plant),
         "sm": {code: len(store.items) for code, store in plant.supermarket.items()},
         "fg": plant.warehouse,
         "quar": len(plant.quarantined),
         "scrap": dict(plant.scrapped),
         "washing": plant.washing,
+        "mat": plant.material.snapshot(),
+        "recv": plant.receiving.snapshot(),
     }

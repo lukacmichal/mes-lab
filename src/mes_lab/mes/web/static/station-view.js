@@ -70,6 +70,10 @@ const StationView = (() => {
     const cr = info && info.cr;
     if (!cr) return "";
     const who = cr.p && Floor.S.people.get(cr.p);
+    if (cr.k === "golden") {
+      const who = cr.p && Floor.S.people.get(cr.p);
+      return `<div class="sv-text"><b>${MES.esc(T("Master sample check of the tester (start of the shift)", "Overenie testera vzorovým kusom (začiatok zmeny)"))}</b>${who ? ` · ${MES.esc(who.rec.n)}` : ""}</div>`;
+    }
     const role = cr.k === "call" ? (cr.role === "IT" ? T("IT technician", "IT technik") : T("maintenance technician", "technik údržby")) : T("operator", "operátor");
     const text = cr.ph === "wait" ? T(`Waiting for a ${role}`, `Čaká na: ${role}`)
       : cr.ph === "walk" ? T(`${role} is on the way`, `${role} ide k stroju`)

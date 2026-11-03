@@ -22,7 +22,7 @@ const CallPanel = (() => {
   }
 
   function render() {
-    if (!window.MES_CAN_ACT) {
+    if (!MES.can("plant")) {
       panel.innerHTML = `<div class="head"><b>${T("Call a person", "Privolať pracovníka")}</b><button class="x" type="button" data-call-close aria-label="Close">×</button></div>
         <p>${T("Calling somebody changes what the plant does, so it needs a signed-in user.", "Privolanie mení, čo závod robí, preto treba byť prihlásený.")}</p>
         <a class="btn small primary" href="/login?next=/">${T("Sign in", "Prihlásiť sa")}</a>`;

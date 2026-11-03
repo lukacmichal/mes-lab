@@ -13,11 +13,14 @@ const FloorPeople = (() => {
     FOR: { color: "#e0453a", name: ["Production foreman", "Majster výroby"] },
     LOG: { color: "#3aa660", name: ["Logistics worker", "Skladník"] },
     MAN: { color: "#34495e", name: ["Production manager", "Vedúci výroby"] },
+    MAT: { color: "#14a3a0", name: ["Material handler", "Zásobovač"] },
   };
   const ACT = {
     post: ["at the post", "na svojom mieste"], idle: ["waiting", "čaká"], walk: ["walking", "ide"],
-    fix: ["working at the machine", "pracuje pri stroji"], break: ["on a break", "má prestávku"],
+    fix: ["working at the machine", "pracuje pri stroji"], setup: ["changes the machine over", "prestavuje stroj"], break: ["on a break", "má prestávku"],
     supervise: ["looking at the line", "kontroluje linku"],
+    check: ["checks the machine on a round (state, feeders, trays) with the handheld terminal", "kontroluje stroj na obchôdzke (stav, podávače, zásobníky) s ručným terminálom"],
+    inspect: ["inspection round of maintenance: looks the machine over (noise, leaks, filters, lubrication)", "obchôdzka údržby: prezerá stroj (hluk, úniky, filtre, mazanie)"],
     esd: ["at the ESD gate", "na ESD bráne"], coat: ["putting on an ESD coat", "oblieka si ESD plášť"],
     coffee: ["at the coffee machine", "pri kávovare"], wc: ["at the toilet", "na toalete"],
     take: ["takes a piece out of the rack and scans it", "berie kus z regálu a skenuje ho"],
@@ -27,7 +30,10 @@ const FloorPeople = (() => {
     cards: ["plays cards with a colleague (nothing to do for a while)", "hrá s kolegom karty (chvíľu nie je čo robiť)"],
     read: ["reads a book (nothing to do for a while)", "číta knihu (chvíľu nie je čo robiť)"],
     meeting: ["at the shift meeting in front of the andon board", "na porade zmeny pred andon tabuľou"],
+    scan: ["scans the reels of a box against the delivery note", "skenuje cievky z krabice podľa dodacieho listu"],
+    pick: ["picks the reels the lines ordered in the store, oldest first", "vychystáva v sklade cievky, ktoré linky objednali, najstaršie prvé"],
   };
+  const SUPPLIER = { OHMWERK: "#2e6fbf", MORAVIA: "#b8452f", TISZAKON: "#3d8a4a" };
   const ESD = {
     g: ["passed the ESD gate (wrist strap and footwear tested)", "prešiel ESD bránou (náramok a obuv otestované)"],
     c: ["wears an ESD coat", "má ESD plášť"],
@@ -77,9 +83,20 @@ const FloorPeople = (() => {
     const hair = grey ? GREY[Math.floor(h(3) * GREY.length)] : HAIR[Math.floor(h(3) * HAIR.length)];
     const style = w ? ["long", "ponytail", "bun", "bob", "long"][Math.floor(h(4) * 5)]
       : (h(4) < 0.12 ? "bald" : ["short", "short", "crew", "curly"][Math.floor(h(5) * 4)]);
+    const pick = (x, table) => { let acc = 0; for (const [v, p] of table) { acc += p; if (x < acc) return v; } return table[table.length - 1][0]; };
     return {
       woman: w, hair, style, grey, skin: SKIN[Math.floor(h(1) * SKIN.length)], eyes: EYES[Math.floor(h(6) * EYES.length)],
-      glasses: h(7) < 0.22, beard: !w && h(8) < 0.22, earrings: w && h(9) < 0.55, lips: w && h(10) < 0.6,
+      glasses: h(7) < 0.22, beard: !w && h(8) < 0.22, lips: w && h(10) < 0.6,
+      // only on the photo: the face of everybody is a little different
+      mood: pick(h(11), [["laugh", 0.12], ["smile", 0.24], ["slight", 0.2], ["smirk", 0.08], ["neutral", 0.24], ["frown", 0.12]]),
+      sw: 0.9 + h(12) * 0.2, sh: 0.93 + h(13) * 0.14,                      // the size of the head
+      dx: (h(14) - 0.5) * 9, dy: (h(15) - 0.5) * 6, tilt: (h(16) - 0.5) * 7,   // not quite in the middle of the photo
+      ear: { rx: 3.4 + h(17) * 1.9, ry: 5.4 + h(18) * 2.8, y: (h(19) - 0.5) * 4, out: h(20) < 0.15 },
+      brow: { w: 1.4 + h(21) * 1.9, arch: h(22), tilt: (h(23) - 0.5) * 3, len: 0.85 + h(24) * 0.35 },
+      eyeGap: (h(25) - 0.5) * 3, eyeR: 1.55 + h(26) * 0.7, nose: 0.85 + h(27) * 0.35,
+      tattoo: h(28) < 0.04 ? ["star", "dots", "swirl"][Math.floor(h(29) * 3)] : null,      // one in twenty-five
+      earring: w ? (h(9) < 0.55 ? ["stud", "hoop", "drop"][Math.floor(h(30) * 3)] : null) : (h(9) < 0.07 ? "stud1" : null),
+      silver: h(33) < 0.4, mole: h(31) < 0.12, freckles: h(32) < 0.08,
     };
   }
 
@@ -156,14 +173,14 @@ const FloorPeople = (() => {
       lh = [5.0, -1.5 + w]; rh = [5.0, 1.5 + w];
     } else if (!walking && rec.a === "read") {
       lh = [5.3, -2.6]; rh = [5.3, 2.6];
-    } else if (rec.a === "fix" || rec.a === "take" || rec.a === "put" || rec.a === "uncoat" || rec.a === "wash" || (rec.a === "post" && rec.s)) {
+    } else if (rec.a === "fix" || rec.a === "setup" || rec.a === "take" || rec.a === "put" || rec.a === "uncoat" || rec.a === "wash" || (rec.a === "post" && rec.s)) {
       const w = Math.sin(t * 6 + rec.i) * (rec.a === "wash" ? 1.4 : 1);
       lh = [6.2 + w * 0.7, -3 + w * 0.5]; rh = [6.4 - w * 0.7, 3 + w * 0.5];
     } else if (walking) {
       const sw = Math.sin(t * 9 + rec.i) * 2;
       lh = [0.8 + sw, -5.6]; rh = [0.8 - sw, 5.6];
-    } else if (rec.a === "supervise") {
-      lh = [4.6, -2.2]; rh = [4.2, 2.6];                         // holds the clipboard
+    } else if (rec.a === "supervise" || rec.a === "check" || rec.a === "inspect") {
+      lh = [4.6, -2.2]; rh = [4.2, 2.6];                         // holds the clipboard / the handheld terminal
     } else {
       lh = [0.8, -5.5]; rh = [0.8, 5.5];
     }
@@ -222,7 +239,18 @@ const FloorPeople = (() => {
       if (rec.c === "laptop") { fillRR(ctx, 4.2, -3, 5.8, 6, 0.6, "#2b2f36", "#59657a", 0.3); rect(ctx, 5, -2.2, 4.2, 4.4, "#7fb2e5"); }       // the laptop of IT
       else if (rec.c === "meter") { fillRR(ctx, 4.4, 2.2, 3.4, 5.8, 0.7, "#f1c40f", "#7a6508", 0.3); rect(ctx, 4.9, 2.7, 2.4, 1.8, "#cfe9d4"); circle(ctx, 6.1, 6.8, 0.7, "#c0392b"); }  // multimeter
       else if (rec.c === "tools") fillRR(ctx, -1.2, 6.2, 5, 3.4, 0.5, "#c0392b", "#7d231a", 0.3);                                   // tool box at the side
+      else if (rec.c === "reel") { circle(ctx, 5.4, 0, 2.6, "#20262f", "#a9b4c0", 0.4); circle(ctx, 5.4, 0, 0.7, "#a9b4c0"); }    // a reel of components
+      else if (rec.c === "paste") { fillRR(ctx, 4.2, -1.8, 3.2, 3.6, 0.8, "#eef1f4", "#7d8896", 0.3); rect(ctx, 4.2, -1.8, 3.2, 1, "#5a8fd8"); }  // a jar of paste
+      else if (rec.c === "box") fillRR(ctx, 3.8, -3.4, 5.6, 6.8, 0.5, "#c9a56b", "#8a6d3b", 0.4);                                  // a box of the supplier
+      else if (rec.c === "trolley") {                                                                                         // the reel trolley, pushed
+        fillRR(ctx, 4.6, -4.2, 8.4, 8.4, 0.8, P.dark ? "#3a4350" : "#b8c0cc", "#59657a", 0.4);
+        for (let i = 0; i < 4; i++) circle(ctx, 6.7 + (i % 2) * 4.2, -2.1 + Math.floor(i / 2) * 4.2, 1.7, "#20262f", "#a9b4c0", 0.3);
+      }
       if ((rec.r === "FOR" || rec.r === "MAN") && (rec.a === "supervise" || rec.a === "meeting")) fillRR(ctx, 3.2, -1.8, 3.4, 4.4, 0.3, "#f4f6f8", "#8795ab", 0.3);   // clipboard
+      if (!walking && (rec.a === "check" || rec.a === "inspect")) {                              // the handheld terminal
+        fillRR(ctx, 3.4, -1.7, 3.0, 4.6, 0.5, "#2b2f36", "#59657a", 0.3);
+        rect(ctx, 3.9, -1.2, 2.0, 2.4, rec.a === "inspect" ? "#f5c66a" : "#7fd4a8");
+      }
       ctx.restore();
     }
   }
@@ -328,47 +356,96 @@ const FloorPeople = (() => {
       const r = Math.round(((n >> 16) & 255) * f), g = Math.round(((n >> 8) & 255) * f), b = Math.round((n & 255) * f);
       return `rgb(${r},${g},${b})`;
     };
+    const f1 = (v) => v.toFixed(1);
     const hairD = dark(lk.hair, 0.72);
     const id = `p${rec.i}`;
     const parts = [];
+    // the person stands a little off the middle, the head a little turned and of its own size
+    const body = `translate(${f1(lk.dx * 0.7)} ${f1(Math.max(0, lk.dy))})`;
+    const head = `translate(${f1(lk.dx)} ${f1(lk.dy)}) rotate(${f1(lk.tilt)} 60 96) translate(60 62) scale(${lk.sw.toFixed(3)} ${lk.sh.toFixed(3)}) translate(-60 -62)`;
     parts.push(`<defs><linearGradient id="${id}bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#dfe7f1"/><stop offset="1" stop-color="#b9c6d6"/></linearGradient>
-      <radialGradient id="${id}sk" cx="0.45" cy="0.4" r="0.7"><stop offset="0" stop-color="${lk.skin}"/><stop offset="1" stop-color="${dark(lk.skin, 0.9)}"/></radialGradient></defs>`);
-    parts.push(`<rect width="120" height="140" rx="10" fill="url(#${id}bg)"/>`);
+      <radialGradient id="${id}sk" cx="0.45" cy="0.4" r="0.7"><stop offset="0" stop-color="${lk.skin}"/><stop offset="1" stop-color="${dark(lk.skin, 0.9)}"/></radialGradient>
+      <clipPath id="${id}cl"><rect width="120" height="140" rx="10"/></clipPath></defs>`);
+    parts.push(`<rect width="120" height="140" rx="10" fill="url(#${id}bg)"/><g clip-path="url(#${id}cl)">`);
     // long hair falls behind the shoulders
-    if (lk.style === "long") parts.push(`<path d="M34 60 C30 92 32 118 40 128 L80 128 C88 118 90 92 86 60 Z" fill="${lk.hair}"/>`);
-    if (lk.style === "bob") parts.push(`<path d="M35 58 C33 80 36 94 42 98 L78 98 C84 94 87 80 85 58 Z" fill="${lk.hair}"/>`);
+    if (lk.style === "long") parts.push(`<path transform="${head}" d="M34 60 C30 92 32 118 40 128 L80 128 C88 118 90 92 86 60 Z" fill="${lk.hair}"/>`);
+    if (lk.style === "bob") parts.push(`<path transform="${head}" d="M35 58 C33 80 36 94 42 98 L78 98 C84 94 87 80 85 58 Z" fill="${lk.hair}"/>`);
     // the body: shirt, coat or vest
-    parts.push(`<path d="M8 140 C10 118 28 106 46 103 L74 103 C92 106 110 118 112 140 Z" fill="${shirt}" stroke="${dark(shirt === "#f2f5f9" ? "#c3ccd8" : shirt, 0.8)}" stroke-width="1"/>`);
+    parts.push(`<g transform="${body}">`);
+    parts.push(`<path d="M6 150 C8 118 28 106 46 103 L74 103 C92 106 112 118 114 150 Z" fill="${shirt}" stroke="${dark(shirt === "#f2f5f9" ? "#c3ccd8" : shirt, 0.8)}" stroke-width="1"/>`);
     if (coat) parts.push(`<path d="M50 103 L60 122 L70 103" fill="none" stroke="${role.color}" stroke-width="5"/><circle cx="60" cy="130" r="1.6" fill="#9aa6b8"/>`);
-    else if (rec.r === "LOG") parts.push(`<path d="M50 103 L60 116 L70 103 Z" fill="#3a4350"/><rect x="18" y="122" width="84" height="5" fill="#eef2f6" opacity=".9"/>`);
+    else if (rec.r === "LOG") parts.push(`<path d="M50 103 L60 116 L70 103 Z" fill="#3a4350"/><rect x="16" y="122" width="88" height="5" fill="#eef2f6" opacity=".9"/>`);
     else parts.push(`<path d="M50 103 L60 114 L70 103" fill="${dark(shirt, 0.82)}"/>`);
     // a badge on the chest
     parts.push(`<rect x="76" y="116" width="20" height="14" rx="2" fill="#ffffff" stroke="#9aa6b8" stroke-width=".8"/><rect x="76" y="116" width="20" height="4" rx="1.5" fill="${role.color}"/>`);
-    // neck, ears, head
-    parts.push(`<path d="M50 84 L50 104 C55 109 65 109 70 104 L70 84 Z" fill="${dark(lk.skin, 0.88)}"/>`);
-    parts.push(`<ellipse cx="37.5" cy="64" rx="4.2" ry="6.5" fill="${lk.skin}"/><ellipse cx="82.5" cy="64" rx="4.2" ry="6.5" fill="${lk.skin}"/>`);
-    if (lk.earrings) parts.push(`<circle cx="37" cy="72" r="1.6" fill="#e6c25a"/><circle cx="83" cy="72" r="1.6" fill="#e6c25a"/>`);
+    parts.push(`<path d="M50 80 L50 104 C55 109 65 109 70 104 L70 80 Z" fill="${dark(lk.skin, 0.88)}"/></g>`);     // the neck
+    // the head: ears, face, hair
+    parts.push(`<g transform="${head}">`);
+    const ear = lk.ear, ey = 64 + ear.y, ex = ear.out ? 1.4 : 0;
+    parts.push(`<ellipse cx="${f1(37.8 - ex)}" cy="${f1(ey)}" rx="${f1(ear.rx)}" ry="${f1(ear.ry)}" fill="${lk.skin}"/><ellipse cx="${f1(82.2 + ex)}" cy="${f1(ey)}" rx="${f1(ear.rx)}" ry="${f1(ear.ry)}" fill="${lk.skin}"/>`);
+    parts.push(`<path d="M${f1(37.6 - ex)} ${f1(ey - ear.ry * 0.5)} q-1.6 ${f1(ear.ry * 0.5)} 0 ${f1(ear.ry)} M${f1(82.4 + ex)} ${f1(ey - ear.ry * 0.5)} q1.6 ${f1(ear.ry * 0.5)} 0 ${f1(ear.ry)}" stroke="${dark(lk.skin, 0.8)}" stroke-width=".8" fill="none"/>`);
+    if (lk.earring) {
+      const lobe = ey + ear.ry - 0.8, gold = lk.silver ? "#c9ced6" : "#e6c25a";
+      const one = (x) => lk.earring === "hoop" ? `<circle cx="${f1(x)}" cy="${f1(lobe + 2.2)}" r="2.4" fill="none" stroke="${gold}" stroke-width="1"/>`
+        : lk.earring === "drop" ? `<path d="M${f1(x)} ${f1(lobe)} L${f1(x)} ${f1(lobe + 3.2)}" stroke="${gold}" stroke-width=".7"/><circle cx="${f1(x)}" cy="${f1(lobe + 4.4)}" r="1.5" fill="${lk.silver ? "#9fd3e8" : "#c0485a"}"/>`
+          : `<circle cx="${f1(x)}" cy="${f1(lobe)}" r="1.4" fill="${gold}"/>`;
+      parts.push(one(37.8 - ex) + (lk.earring === "stud1" ? "" : one(82.2 + ex)));
+    }
     parts.push(`<ellipse cx="60" cy="62" rx="22" ry="27" fill="url(#${id}sk)"/>`);
     if (lk.beard) parts.push(`<path d="M39 66 C40 86 50 92 60 92 C70 92 80 86 81 66 C77 78 70 82 60 82 C50 82 43 78 39 66 Z" fill="${lk.hair}" opacity=".85"/>`);
     // the hair on top
     switch (lk.style) {
       case "bald": parts.push(`<path d="M38 58 C38 52 40 50 41 49 L42 62 Z M82 58 C82 52 80 50 79 49 L78 62 Z" fill="${lk.hair}"/>`); break;
       case "crew": parts.push(`<path d="M38 56 C38 38 50 33 60 33 C70 33 82 38 82 56 C78 46 70 43 60 43 C50 43 42 46 38 56 Z" fill="${lk.hair}"/>`); break;
-      case "curly": parts.push(`<g fill="${lk.hair}">${[36, 43, 50, 57, 64, 71, 78, 84].map((x, i) => `<circle cx="${x}" cy="${44 - Math.sin(i / 7 * Math.PI) * 9}" r="7"/>`).join("")}</g>`); break;
+      case "curly": parts.push(`<g fill="${lk.hair}">${[36, 43, 50, 57, 64, 71, 78, 84].map((x, i) => `<circle cx="${x}" cy="${f1(44 - Math.sin(i / 7 * Math.PI) * 9)}" r="7"/>`).join("")}</g>`); break;
       case "ponytail": parts.push(`<path d="M37 60 C35 36 50 31 60 31 C72 31 86 37 83 60 C80 48 74 42 60 42 C48 42 41 48 37 60 Z" fill="${lk.hair}"/><path d="M80 44 C92 52 92 74 86 86 C84 72 82 60 78 52 Z" fill="${hairD}"/>`); break;
       case "bun": parts.push(`<circle cx="60" cy="30" r="9" fill="${hairD}"/><path d="M37 60 C35 36 50 32 60 32 C72 32 86 37 83 60 C80 48 74 42 60 42 C48 42 41 48 37 60 Z" fill="${lk.hair}"/>`); break;
       case "long": case "bob": parts.push(`<path d="M36 66 C33 36 48 30 60 30 C74 30 88 36 84 66 C82 52 76 44 64 41 C56 46 46 48 40 52 C38 56 37 60 36 66 Z" fill="${lk.hair}"/>`); break;
       default: parts.push(`<path d="M38 58 C36 38 49 32 61 32 C73 32 85 39 82 58 C80 48 73 42 64 41 C56 44 46 45 40 50 Z" fill="${lk.hair}"/>`);
     }
-    // the face
-    const brow = lk.grey ? "#8a8a8c" : hairD;
-    parts.push(`<path d="M44 55 Q50 51 55 54" stroke="${brow}" stroke-width="2.2" fill="none" stroke-linecap="round"/><path d="M65 54 Q70 51 76 55" stroke="${brow}" stroke-width="2.2" fill="none" stroke-linecap="round"/>`);
-    parts.push(`<ellipse cx="50" cy="61" rx="4" ry="2.6" fill="#fff"/><ellipse cx="70" cy="61" rx="4" ry="2.6" fill="#fff"/>`);
-    parts.push(`<circle cx="50.5" cy="61" r="1.9" fill="${lk.eyes}"/><circle cx="70.5" cy="61" r="1.9" fill="${lk.eyes}"/><circle cx="51" cy="60.4" r=".6" fill="#fff"/><circle cx="71" cy="60.4" r=".6" fill="#fff"/>`);
-    if (lk.woman) parts.push(`<path d="M45.5 58.6 L47 57.8 M74.5 58.6 L73 57.8" stroke="#2a2a2a" stroke-width=".8"/>`);
-    parts.push(`<path d="M60 63 L58 72 Q60 74 62.5 72.5" stroke="${dark(lk.skin, 0.72)}" stroke-width="1.3" fill="none" stroke-linecap="round"/>`);
-    parts.push(`<path d="M52 79 Q60 ${lk.woman ? 84 : 83} 68 79" stroke="${lk.lips ? "#b5545a" : dark(lk.skin, 0.62)}" stroke-width="${lk.lips ? 2.4 : 1.8}" fill="none" stroke-linecap="round"/>`);
-    if (lk.glasses) parts.push(`<g fill="rgba(200,225,255,.18)" stroke="#2e3440" stroke-width="1.6"><rect x="42" y="55.5" width="16" height="11" rx="4"/><rect x="62" y="55.5" width="16" height="11" rx="4"/><path d="M58 60 L62 60" fill="none"/></g>`);
+    // the face: freckles, a mole, a small tattoo now and then
+    const ink = "#33506e";
+    if (lk.freckles) parts.push(`<g fill="${dark(lk.skin, 0.78)}">${[[46, 68], [49, 70], [52, 68.5], [68, 68.5], [71, 70], [74, 68]].map(([x, y]) => `<circle cx="${x}" cy="${y}" r=".7"/>`).join("")}</g>`);
+    if (lk.mole) parts.push(`<circle cx="${rec.i % 2 ? 72.5 : 47}" cy="${rec.i % 3 ? 74 : 69}" r=".9" fill="${dark(lk.skin, 0.55)}"/>`);
+    if (lk.tattoo === "star") parts.push(`<path d="M75 66.5 l.9 2 2.1.2 -1.6 1.4 .5 2.1 -1.9 -1.1 -1.9 1.1 .5 -2.1 -1.6 -1.4 2.1 -.2 Z" fill="${ink}" opacity=".85"/>`);
+    if (lk.tattoo === "dots") parts.push(`<g fill="${ink}" opacity=".85"><circle cx="72.5" cy="67.5" r=".9"/><circle cx="75.2" cy="68.8" r=".9"/><circle cx="77.8" cy="70.3" r=".9"/></g>`);
+    if (lk.tattoo === "swirl") parts.push(`<path d="M41.5 66 q2 -3.2 4.2 -.6 q2 2.6 4.2 -.4 M43 70 q1.6 -1.8 3.2 0" stroke="${ink}" stroke-width=".9" fill="none" opacity=".85" stroke-linecap="round"/>`);
+    // the eyebrows: thin or bushy, straight or arched; drawn together when frowning, raised when laughing
+    const brow = lk.grey ? "#8a8a8c" : hairD, b = lk.brow;
+    const lift = lk.mood === "laugh" ? -1.2 : lk.mood === "smile" ? -0.5 : 0;
+    const inner = (lk.mood === "frown" ? 2.2 : 0) + b.tilt * 0.5;              // the inner ends lower = a frown
+    const reach = 5.5 * b.len, archY = 51.5 - b.arch * 2.2 + lift;
+    parts.push(`<path d="M${f1(55 - reach * 2)} ${f1(55 + lift)} Q${f1(55 - reach)} ${f1(archY)} 55 ${f1(54 + lift + inner)}" stroke="${brow}" stroke-width="${f1(b.w)}" fill="none" stroke-linecap="round"/>`);
+    parts.push(`<path d="M65 ${f1(54 + lift + inner)} Q${f1(65 + reach)} ${f1(archY)} ${f1(65 + reach * 2)} ${f1(55 + lift)}" stroke="${brow}" stroke-width="${f1(b.w)}" fill="none" stroke-linecap="round"/>`);
+    // the eyes: squeezed into arcs by a big laugh
+    const xl = 50 - lk.eyeGap, xr = 70 + lk.eyeGap;
+    if (lk.mood === "laugh") {
+      parts.push(`<path d="M${f1(xl - 4)} 62 Q${f1(xl)} 58 ${f1(xl + 4)} 62 M${f1(xr - 4)} 62 Q${f1(xr)} 58 ${f1(xr + 4)} 62" stroke="#2a2a2a" stroke-width="1.5" fill="none" stroke-linecap="round"/>`);
+      parts.push(`<circle cx="${f1(xl - 3)}" cy="69" r="3.6" fill="#e8838a" opacity=".22"/><circle cx="${f1(xr + 3)}" cy="69" r="3.6" fill="#e8838a" opacity=".22"/>`);
+    } else {
+      const ry = lk.mood === "frown" ? 2.2 : 2.6;
+      parts.push(`<ellipse cx="${f1(xl)}" cy="61" rx="4" ry="${ry}" fill="#fff"/><ellipse cx="${f1(xr)}" cy="61" rx="4" ry="${ry}" fill="#fff"/>`);
+      parts.push(`<circle cx="${f1(xl + 0.5)}" cy="61" r="${f1(lk.eyeR)}" fill="${lk.eyes}"/><circle cx="${f1(xr + 0.5)}" cy="61" r="${f1(lk.eyeR)}" fill="${lk.eyes}"/><circle cx="${f1(xl + 1)}" cy="60.4" r=".6" fill="#fff"/><circle cx="${f1(xr + 1)}" cy="60.4" r=".6" fill="#fff"/>`);
+      if (lk.woman) parts.push(`<path d="M${f1(xl - 4.5)} 58.6 L${f1(xl - 3)} 57.8 M${f1(xr + 4.5)} 58.6 L${f1(xr + 3)} 57.8" stroke="#2a2a2a" stroke-width=".8"/>`);
+    }
+    const nose = lk.nose;
+    parts.push(`<path d="M60 63 L${f1(58 - (nose - 1) * 2)} ${f1(63 + 9 * nose)} Q60 ${f1(65 + 9 * nose)} 62.5 ${f1(63.5 + 9 * nose)}" stroke="${dark(lk.skin, 0.72)}" stroke-width="1.3" fill="none" stroke-linecap="round"/>`);
+    // the mouth
+    const lips = lk.lips ? "#b5545a" : dark(lk.skin, 0.62), lw = lk.lips ? 2.4 : 1.8;
+    const line = (d) => `<path d="${d}" stroke="${lips}" stroke-width="${lw}" fill="none" stroke-linecap="round"/>`;
+    switch (lk.mood) {
+      case "laugh":
+        parts.push(`<path d="M49.5 77 Q60 92 70.5 77 Q60 80 49.5 77 Z" fill="#7a2b30" stroke="${lips}" stroke-width="${lk.lips ? 1.6 : 1}"/>`);
+        parts.push(`<path d="M52 78.2 Q60 80.6 68 78.2 L67.2 80.2 Q60 82.4 52.8 80.2 Z" fill="#fbfbf7"/>`);
+        break;
+      case "smile": parts.push(line(`M51.5 78.5 Q60 ${lk.woman ? 85 : 84} 68.5 78.5`)); break;
+      case "slight": parts.push(line("M52.5 79.5 Q60 82.6 67.5 79.5")); break;
+      case "smirk": parts.push(line("M52.5 80.5 Q61 82.5 68 77.6")); break;
+      case "frown": parts.push(line("M53 82 Q60 78 67 82")); break;
+      default: parts.push(line("M53 80.4 Q60 81.2 67 80.4"));
+    }
+    if (lk.glasses) parts.push(`<g fill="rgba(200,225,255,.18)" stroke="#2e3440" stroke-width="1.6"><rect x="${f1(xl - 8)}" y="55.5" width="16" height="11" rx="4"/><rect x="${f1(xr - 8)}" y="55.5" width="16" height="11" rx="4"/><path d="M${f1(xl + 8)} 60 L${f1(xr - 8)} 60" fill="none"/></g>`);
+    parts.push(`</g></g>`);
     return `<svg class="portrait" viewBox="0 0 120 140" width="96" height="112" role="img" aria-label="${svgEsc(rec.n)}">${parts.join("")}</svg>`;
   }
 
@@ -486,6 +563,150 @@ const FloorPeople = (() => {
   /* the things that get a label on the plan (they are not obvious from above) */
   const LABELLED = new Set(["coffee", "vending", "andon", "rack", "printer", "cabinet", "shelf", "locker", "sink"]);
 
+  /* SMT material beside the team desks: a reel rack at every line, the paste fridge and the thaw cabinet */
+  function drawStore(ctx, L, floor, k, lang) {
+    const S = L.smt_store;
+    if (!S || k < 0.35) return;
+    const mat = (floor && floor.mat) || {};
+    const T2 = (en, sk) => (lang === "sk" ? sk : en);
+    const size = Math.max(3, Math.min(5.5, 6 / k));
+    for (const r of S.racks) {
+      fillRR(ctx, r.x, r.y, r.w, r.h, 1, P.dark ? "#3a4350" : "#b8c0cc", P.dark ? "#59657a" : "#7d8896", 0.5);
+      const count = Math.min(12, (mat.racks && mat.racks[r.line]) || 0);
+      for (let i = 0; i < 3; i++) rect(ctx, r.x + 1.5, r.y + 2 + i * 6.8, r.w - 3, 0.5, P.dark ? "#59657a" : "#8a93a1");
+      for (let i = 0; i < count; i++) {
+        const cx = r.x + 4.6 + (i % 4) * 6.9, cy = r.y + 5.4 + Math.floor(i / 4) * 6.8;
+        circle(ctx, cx, cy, 2.6, "#20262f", "#a9b4c0", 0.3);
+        circle(ctx, cx, cy, 0.6, "#a9b4c0");
+      }
+      if (k > 0.75) text(ctx, T2("Reels", "Cievky"), r.x + r.w / 2, r.y + r.h + size * 0.9, size, P.textDim, "center", "600");
+    }
+    const f = S.fridge;
+    if (f) {
+      fillRR(ctx, f.x, f.y, f.w, f.h, 1.2, "#f2f5f9", "#5a8fd8", 0.7);
+      rect(ctx, f.x + f.w - 3, f.y + 4, 0.9, f.h - 8, "#8a93a1");                             // the handle
+      const cx = f.x + f.w / 2 - 1.5, cy = f.y + f.h / 2;
+      for (let i = 0; i < 3; i++) {
+        const an = (i * Math.PI) / 3;
+        line(ctx, cx - Math.cos(an) * 3.2, cy - Math.sin(an) * 3.2, cx + Math.cos(an) * 3.2, cy + Math.sin(an) * 3.2, "#5a8fd8", 0.6);
+      }
+      if (k > 0.75) text(ctx, T2("Paste fridge", "Chladnička"), f.x + f.w / 2, f.y + f.h + size * 0.9, size * 0.9, P.textDim, "center", "600");
+    }
+    const c = S.thaw;
+    if (c) {
+      fillRR(ctx, c.x, c.y, c.w, c.h, 1, P.dark ? "#2b3646" : "#dfe7f1", P.dark ? "#59657a" : "#7d8896", 0.5);
+      const cab = mat.cab || [];
+      cab.slice(0, 8).forEach((u, i) => {
+        const cx = c.x + 4 + (i % 4) * 6, cy = c.y + 6 + Math.floor(i / 4) * 9;
+        const color = u >= 1 ? "#3ddc84" : u > 0.5 ? "#f1a33c" : "#5a8fd8";                   // thawed / warming / cold
+        fillRR(ctx, cx - 2, cy - 2.4, 4, 4.8, 0.8, "#eef1f4", color, 0.7);
+      });
+      if (k > 0.75) text(ctx, T2("Thaw cabinet", "Rozmrazovanie"), c.x + c.w / 2, c.y + c.h + size * 0.9, size * 0.9, P.textDim, "center", "600");
+    }
+  }
+
+  /* goods receipt south of the goods-in warehouse: the bay of the supplier trucks, the desk, the reel store */
+  function drawReceiving(ctx, L, floor, k, lang, view) {
+    const R = L.receiving;
+    if (!R || !R.bay) return;
+    const bay = R.bay, t2 = (en, sk) => (lang === "sk" ? sk : en);
+    if (view && !view.seen({ x: bay.x - 40, y: bay.rear_y - 20, w: 260, h: L.world.h - bay.rear_y + 20 })) return;
+    rect(ctx, bay.x - bay.trailer_w / 2 - 4, bay.rear_y - 4, bay.trailer_w + 8, L.world.h - bay.rear_y + 4, P.dark ? "#161c27" : "#cdd4de");
+    const tb = R.table;
+    fillRR(ctx, tb.x, tb.y, tb.w, tb.h, 1.2, P.dark ? "#5b4a36" : "#b49a76", P.dark ? "#3c3123" : "#8a734f", 0.4);
+    fillRR(ctx, tb.x + tb.w - 12, tb.y + 2, 9, 7, 0.8, "#eef1f4", "#7d8896", 0.4);                 // the label printer
+    rect(ctx, tb.x + tb.w - 10.5, tb.y + 8.4, 6, 1.2, "#ffffff");
+    fillRR(ctx, tb.x + 4, tb.y + 4, 5, 3, 0.6, "#2b2f36", null);                                    // the hand scanner
+    const st = R.store, rv = (floor && floor.recv) || {};
+    const dryW = 14 * (st.dry || 0);
+    fillRR(ctx, st.x, st.y, st.w - dryW - 2, st.h, 1, P.dark ? "#3a4350" : "#b8c0cc", P.dark ? "#59657a" : "#7d8896", 0.5);
+    const shown = Math.min(24, Math.ceil((rv.store || 0) / 12));
+    for (let i = 0; i < shown; i++) {
+      const cx = st.x + 4 + (i % 12) * 5.6, cy = st.y + 6 + Math.floor(i / 12) * 11;
+      circle(ctx, cx, cy, 2.4, "#20262f", "#a9b4c0", 0.3);
+    }
+    for (let d = 0; d < (st.dry || 0); d++) {                                                       // dry cabinets (MSL)
+      const x = st.x + st.w - dryW + d * 14;
+      fillRR(ctx, x, st.y - 1, 12, st.h + 2, 1, "#e8edf3", "#5a8fd8", 0.6);
+      rect(ctx, x + 2, st.y + 2, 8, st.h - 4, P.dark ? "#2b3646" : "#cfdbe8");
+      text(ctx, "RH", x + 6, st.y + st.h / 2 + 1.2, 3, "#5a8fd8", "center", "700");
+    }
+    if (k > 0.6) {
+      const size = Math.max(3.2, Math.min(6, 6.5 / k));
+      text(ctx, t2("Goods receipt · SMT reels", "Príjem tovaru · cievky SMT"), R.label[0], R.label[1], size, P.textDim, "left", "700");
+      if (k > 1) {
+        text(ctx, t2("Receiving desk", "Príjem"), tb.x + tb.w / 2, tb.y - size * 0.4, size * 0.8, P.textDim, "center", "600");
+        text(ctx, t2(`Reel store · ${rv.store || 0}`, `Sklad cievok · ${rv.store || 0}`), st.x + st.w / 2, st.y - size * 0.6, size * 0.8, P.textDim, "center", "600");
+      }
+    }
+    const truck = rv.truck;
+    if (!truck) return;
+    let pose = { x: bay.x, y: bay.rear_y };
+    if (truck.ph !== "unload") {
+      const route = Floor.S.routes && Floor.S.routes[`recv_${truck.ph}`];
+      if (route) pose = Floor.ridePoint(route, Math.min(1, Math.max(0, (Floor.sim - truck.t) / Math.max(1, truck.d))));
+    }
+    const W = bay.trailer_w, Lt = bay.trailer_l, Cl = bay.cab_l, color = SUPPLIER[truck.s] || "#6b7686";
+    ctx.save();
+    ctx.translate(pose.x, pose.y);
+    fillRR(ctx, -W / 2, 0, W, Lt, 2, P.dark ? "#2a3548" : "#d9dfe8", P.dark ? "#55667f" : "#8795ab", 0.8);
+    fillRR(ctx, -W / 2 + 2, 2, W - 4, Lt - 4, 1, P.dark ? "#1b2433" : "#eef1f6", null);
+    rect(ctx, -W / 2, 0, 2.2, Lt, color); rect(ctx, W / 2 - 2.2, 0, 2.2, Lt, color);
+    for (let i = 0; i < Math.min(truck.boxes, 24); i++) {                                           // the boxes still on it
+      fillRR(ctx, -W / 2 + 4 + (i % 3) * 9.6, 4 + Math.floor(i / 3) * 9.6, 8.4, 8.4, 0.6, "#c9a56b", "#8a6d3b", 0.4);
+    }
+    fillRR(ctx, -W / 2 + 4, Lt + 1.5, W - 8, Cl - 3, 3, color, "rgba(0,0,0,.4)", 0.6);
+    fillRR(ctx, -W / 2 + 7, Lt + Cl - 12, W - 14, 6, 1.5, "#bfd9f2", null);
+    ctx.restore();
+    if (k > 1.4) text(ctx, truck.plate, pose.x, pose.y + Lt + Cl + 7, 4, P.text, "center", "600");
+  }
+
+  function storeAt(x, y) {
+    const S = Floor.layout && Floor.layout.smt_store;
+    if (!S) return null;
+    const inside = (r) => r && x >= r.x - 1 && x <= r.x + r.w + 1 && y >= r.y - 1 && y <= r.y + r.h + 1;
+    const R = Floor.layout.receiving;
+    if (R && R.table) {
+      if (inside(R.table)) return "store:recv:table";
+      if (inside(R.store)) return "store:recv:store";
+      const b = R.bay, tr = Floor.floor && Floor.floor.recv && Floor.floor.recv.truck;
+      if (tr && inside({ x: b.x - b.trailer_w / 2, y: b.rear_y, w: b.trailer_w, h: b.trailer_l + b.cab_l })) return "store:recv:truck";
+    }
+    for (const r of S.racks) if (inside(r)) return `store:rack:${r.line}`;
+    if (inside(S.fridge)) return "store:fridge";
+    if (inside(S.thaw)) return "store:thaw";
+    return null;
+  }
+
+  function storeTip(key, lang) {
+    const T2 = (en, sk) => (lang === "sk" ? sk : en);
+    const mat = (Floor.floor && Floor.floor.mat) || {};
+    const rv = (Floor.floor && Floor.floor.recv) || {};
+    if (key === "store:recv:table") return { name: T2("Receiving desk", "Príjmový stôl"), extra: "",
+      what: T2("The material handler scans every reel of a supplier box against the delivery note (the MES refuses a part that was not ordered and a lot on hold) and sticks its reel ID label on.",
+        "Zásobovač tu naskenuje každú cievku z krabice dodávateľa podľa dodacieho listu (MES odmietne neobjednanú súčiastku aj šaržu na blokácii) a nalepí na ňu štítok s ID cievky.") };
+    if (key === "store:recv:store") return { name: T2("Reel store", "Sklad cievok"), extra: `${rv.store || 0} ${T2("reels", "cievok")} · ${rv.orders || 0} ${T2("orders open", "otvorených objednávok")}`,
+      what: T2("Sealed reels, the moisture-sensitive ones in the dry cabinets (RH: low humidity). They go out oldest first (FIFO) to the racks at the SMT lines; the lines ordered " + (rv.cards || 0) + " (" + (rv.urgent || 0) + " urgent).",
+        "Zapečatené cievky, citlivé na vlhkosť v suchých skriniach (RH: nízka vlhkosť). Vydávajú sa najstaršie prvé (FIFO) do regálov pri linkách SMT; linky objednali " + (rv.cards || 0) + " (" + (rv.urgent || 0) + " súrne).") };
+    if (key === "store:recv:truck") {
+      const t = rv.truck || {};
+      return { name: T2(`Supplier truck · ${t.s || ""}`, `Kamión dodávateľa · ${t.s || ""}`), extra: `${t.plate || ""} · ${t.note || ""}`,
+        what: T2(`${t.boxes || 0} boxes still on it; it leaves when the material handler has carried the last one in.`, `Ešte ${t.boxes || 0} krabíc; odíde, keď zásobovač prenesie poslednú.`) };
+    }
+    if (key.startsWith("store:rack:")) {
+      const line = key.slice(11), nr = (mat.racks || {})[line] || 0;
+      return { name: T2(`Reel rack ${line}`, `Regál cievok ${line}`), extra: `${nr} ${T2("partly used reels", "načatých cievok")}`,
+        what: T2("The operator takes the next reel here for a splice (a partly used one first, else a new one from the warehouse) and puts the reels of the last job back.",
+          "Tu si operátor berie ďalšiu cievku na spojenie (najprv načatú, inak novú zo skladu) a vracia sem cievky minulej zákazky.") };
+    }
+    if (key === "store:fridge") return { name: T2("Solder paste fridge", "Chladnička na spájkovaciu pastu"), extra: "2–10 °C",
+      what: T2("The jars of paste wait here; one comes out into the thaw cabinet for every jar taken from it.", "Tu čakajú dózy pasty; za každú dózu vzatú z rozmrazovacej skrine sa do nej presunie ďalšia.") };
+    const cab = mat.cab || [];
+    return { name: T2("Thaw cabinet", "Rozmrazovacia skriňa"), extra: `${cab.filter((u) => u >= 1).length}/${cab.length} ${T2("ready", "pripravených")}`,
+      what: T2("A jar of paste must warm up four hours before it is opened (blue cold, amber warming, green ready).",
+        "Dóza pasty sa musí štyri hodiny ohrievať, kým sa otvorí (modrá studená, oranžová sa ohrieva, zelená pripravená).") };
+  }
+
   function thingOf(f) {
     return THINGS[f.cards ? "cards" : f.kind === "table" && f.room === "office" ? "meeting" : f.kind] || null;
   }
@@ -494,6 +715,8 @@ const FloorPeople = (() => {
   function thingAt(x, y) {
     const L = Floor.layout;
     if (!L) return null;
+    const store = storeAt(x, y);
+    if (store) return store;
     for (let i = L.furniture.length - 1; i >= 0; i--) {
       const f = L.furniture[i];
       if (f.kind === "railing" || f.kind === "chair") continue;
@@ -507,6 +730,7 @@ const FloorPeople = (() => {
 
   /* the tip text of a thing: name, and what it is for; a cabin says whether it is free */
   function thingTip(i, lang) {
+    if (typeof i === "string") return storeTip(i, lang);
     const f = Floor.layout.furniture[i];
     const th = thingOf(f);
     if (!th) return "";
@@ -819,9 +1043,11 @@ const FloorPeople = (() => {
     for (const r of L.rooms) {
       rect(ctx, r.x + 1, r.y + 1, r.w - 2, r.h - 2, P.dark ? "rgba(255,255,255,.035)" : "rgba(0,0,0,.035)");
       line(ctx, r.x, r.y, r.x, r.y + r.h, P.buildingEdge, 0.6);
-      rect(ctx, r.door[0] - 7, r.y - 0.8, 14, 1.6, P.dark ? "#0e1520" : "#e8ecf1");               // the door
+      rect(ctx, r.door[0] - 7, r.y - 0.8, 14, 1.6, P.dark ? "#0e1520" : "#e8ecf1");               // the doorway
+      A.door(ctx, r.door[0], r.y, 14, 1, k);                                                         // and its door
       if (r.entrance) {                                                                              // from the street
         rect(ctx, r.entrance[0] - 8, r.y + r.h - 0.8, 16, 1.8, P.dark ? "#0e1520" : "#e8ecf1");
+        A.door(ctx, r.entrance[0], r.y + r.h, 16, -1, k);
         if (k > 0.9) A.text(ctx, "▲ " + T("ENTRANCE", "VCHOD"), r.entrance[0], r.y + r.h + 6, 4.6, P.textDim, "center", "700");
       }
     }
@@ -837,26 +1063,55 @@ const FloorPeople = (() => {
     labelThings(ctx, L, k, lang);
   }
 
+  /* the screen with the head count of the shifts, in the strip above the halls: one column a shift.
+     Everything on it is in plan units, so it grows and shrinks with the plan like a real screen. From far
+     away the text would be too small to read: it fades into a bar a shift (how much of its roster is here) */
   function drawBoard(ctx, L, floor, k, lang) {
     const bd = L.board;
     if (!bd || !bd.w) return;
-    fillRR(ctx, bd.x, bd.y, bd.w, bd.h, 4, "#10161f", "#59657a", 1);
     const crew = floor && floor.crew;
-    const size = Math.min(7.6, Math.max(5, 8.4 / Math.max(k, 0.5)));
-    A.text(ctx, T("PEOPLE ON SITE", "ĽUDIA V ZÁVODE"), bd.x + 8, bd.y + 8, size * 0.85, "#9fb0c8", "left", "700");
-    if (!crew) return;
-    ["A", "B", "C"].forEach((code, i) => {
+    const u = bd.h / 64;                                                                         // the text grows with the screen
+    fillRR(ctx, bd.x + 2, bd.y + 2.5, bd.w, bd.h, 4, "rgba(0,0,0,.18)", null);                  // its shadow on the floor
+    fillRR(ctx, bd.x, bd.y, bd.w, bd.h, 4, "#0d131c", "#3a4659", 1);                             // the bezel
+    rect(ctx, bd.x + 3, bd.y + 3, bd.w - 6, bd.h - 6, "#121b28");
+    const tw = 140 * u, cw = (bd.w - tw - 8) / 3, pad = 10 * u;
+    const near = Math.min(1, Math.max(0, (k - 0.36) / 0.1));                                    // 0 far away … 1 readable
+    const y1 = bd.y + bd.h * 0.25, y2 = bd.y + bd.h * 0.53, y3 = bd.y + bd.h * 0.79;
+    ctx.save();
+    if (near > 0) {
+      ctx.globalAlpha = near;
+      text(ctx, T("PEOPLE", "ĽUDIA"), bd.x + pad, y1, 11 * u, "#9fb0c8", "left", "700");
+      text(ctx, T("ON SITE", "V ZÁVODE"), bd.x + pad, y2, 11 * u, "#9fb0c8", "left", "700");
+      if (crew && crew.now) text(ctx, `${T("now shift", "teraz zmena")} ${crew.now}`, bd.x + pad, y3, 8 * u, "#6f8098", "left");
+    }
+    if (crew) ["A", "B", "C"].forEach((code, i) => {
       const s = crew.shifts[code];
       if (!s) return;
-      const y = bd.y + 8 + (i + 1) * (bd.h - 12) / 3.4;
-      const now = crew.now === code;
-      A.text(ctx, `${T("Shift", "Zmena")} ${code}  ${s.start}–${s.end}`, bd.x + 8, y, size, now ? "#ffffff" : "#8191a8", "left", now ? "700" : "400");
-      const body = s.on_site
-        ? `${s.on_site} ${T("on site", "v závode")} · ${s.posts} ${T("at posts", "na miestach")} · ${s.break} ${T("on break", "na prestávke")} · ${s.walking} ${T("walking", "idú")}`
-        : `${s.roster} ${T("rostered, not here", "v zozname, nie sú tu")}`;
-      A.text(ctx, body, bd.x + bd.w - 8, y, size, now ? "#3ddc84" : "#6f7f96", "right", now ? "600" : "400");
-      if (now) circle(ctx, bd.x + bd.w - 6, bd.y + 6, 1.8, "#3ddc84");
+      const x = bd.x + tw + i * cw, w = cw - 2 * pad, now = crew.now === code;
+      ctx.globalAlpha = 1;
+      line(ctx, x, bd.y + 8 * u, x, bd.y + bd.h - 8 * u, "#26303f", 0.8 * u);
+      if (now) circle(ctx, x + cw - pad - 2 * u, y1, 2.6 * u, "#3ddc84");
+      if (near < 1) {                                                                            // far away: the bar
+        ctx.globalAlpha = 1 - near;
+        const share = s.roster ? Math.min(1, s.on_site / s.roster) : 0;
+        rect(ctx, x + pad, y2 - 8 * u, w, 16 * u, "#1b2533");
+        if (share) rect(ctx, x + pad, y2 - 8 * u, w * share, 16 * u, now ? "#2fbf71" : "#8fa3bf");
+      }
+      if (!near) return;
+      ctx.globalAlpha = near;
+      A.fitText(ctx, `${T("Shift", "Zmena")} ${code} · ${s.start}–${s.end}`, x + pad, y1, 9.5 * u, w - 8 * u,
+        now ? "#ffffff" : "#8191a8", "left", now ? "700" : "400");
+      const big = String(s.on_site || s.roster);
+      ctx.font = `700 ${15 * u}px "Segoe UI", system-ui, sans-serif`;
+      const nw = ctx.measureText(big).width + 4 * u;
+      text(ctx, big, x + pad, y2, 15 * u, s.on_site ? (now ? "#3ddc84" : "#c9d6e8") : "#4d5a6d", "left", "700");
+      A.fitText(ctx, s.on_site ? T("on site", "v závode") : T("rostered", "v zozname"), x + pad + nw, y2 + u, 9 * u, w - nw,
+        s.on_site ? (now ? "#3ddc84" : "#8fa3bf") : "#6f7f96", "left", "600");
+      A.fitText(ctx, s.on_site
+        ? `${s.posts} ${T("at posts", "na miestach")} · ${s.break} ${T("on break", "na prestávke")} · ${s.walking} ${T("walking", "idú")}`
+        : T("not here", "nie sú tu"), x + pad, y3, 8 * u, w, s.on_site ? "#9fb0c8" : "#6f7f96", "left");
     });
+    ctx.restore();
   }
 
   function drawWalkways(ctx, L, k) {
@@ -929,5 +1184,5 @@ const FloorPeople = (() => {
   }
 
   return { drawPerson, drawLabels, drawDesks, drawStaff, drawBoard, drawWalkways, drawDock, monitorTop, chair, look, portrait,
-    thingAt, thingTip, hidden, ROLE, ACT, ESD, CUSTOMER };
+    thingAt, thingTip, drawStore, drawReceiving, hidden, ROLE, ACT, ESD, CUSTOMER };
 })();

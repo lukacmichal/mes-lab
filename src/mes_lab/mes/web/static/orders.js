@@ -22,7 +22,7 @@
       <tr><th>Order</th><th>Material</th><th>Status</th><th class="num">Qty</th><th class="num">Good</th>
         <th class="num">Scrap</th><th>Created</th><th>Started</th><th>Completed</th><th>Jobs</th></tr>
       ${d.orders.map((o) => `<tr>
-        <td class="mono">${esc(o.order_no)}</td>
+        <td class="mono">${esc(o.order_no)}${o.erp_order_no ? `<div class="faint" style="font-size:12px" title="production order of the ERP">ERP ${esc(o.erp_order_no)}</div>` : ""}</td>
         <td>${esc(o.material)}<div class="faint" style="font-size:12px">${esc(o.material_name)}</div></td>
         <td>${pill(STATUS_STATE[o.status] || "UNKNOWN", o.status.replace("_", " "))}</td>
         <td class="num">${n(o.qty)}</td><td class="num">${n(o.qty_good)}</td><td class="num">${n(o.qty_scrap)}</td>

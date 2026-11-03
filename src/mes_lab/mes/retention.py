@@ -59,6 +59,17 @@ def purge(session: Session, now: datetime, keep_days: int) -> dict:
                 SELECT s.id FROM shipment s WHERE s.departed_at < :cutoff
                   AND NOT EXISTS (SELECT 1 FROM unit u WHERE u.shipment_id = s.id) LIMIT :batch)""",
             {"cutoff": cutoff}),
+        # the interface: delivered messages and the IDs the receivers remember (the books of the ERP stay:
+        # its stock and the coverage of the demand are sums over all of them)
+        "messages": _batched(session, """
+            DELETE FROM integration_message WHERE id IN (
+                SELECT id FROM integration_message WHERE done_at < :cutoff AND status IN ('DONE', 'DISCARDED')
+                LIMIT :batch)""",
+            {"cutoff": cutoff}),
+        "inbox": _batched(session, """
+            DELETE FROM integration_inbox WHERE message_id IN (
+                SELECT message_id FROM integration_inbox WHERE processed_at < :cutoff LIMIT :batch)""",
+            {"cutoff": cutoff}),
         "commands": _batched(session, """
             DELETE FROM sim_command WHERE id IN (
                 SELECT id FROM sim_command WHERE acked_at < :cutoff LIMIT :batch)""",

@@ -34,6 +34,13 @@ the floor plan (see mes_lab.layout_crew), waiting for a free colleague, working 
 * The repair people fetch the next piece themselves from the inbound rack of the repair centre
   (a robot brought it there, see amr.py), and carry it after the repair to the outbound rack or
   into the scrap bin.
+* Qualifications and absences: every operator is qualified for the seats of their skill (SMT, final
+  assembly, the visual inspection, packing, repair; the inspection and the repair need a certificate that
+  runs out). At the start of every shift some people are off (sick, on holiday). The foreman covers their
+  seats with qualified relief people, the machine seats first (loading, inspection, packing, repair, where
+  nothing works without a person), then the desk seats; a seat nobody qualified can take stays empty for
+  the shift. Fewer relief people left over means fewer covered breaks: an operator without a relief takes
+  the break anyway and the machine waits.
 * A call from the MES (`request`): somebody of a department (maintenance, IT, the foreman,
   logistics) is asked to come to a machine for a while. The nearest free one walks there, works
   and walks back; the machine goes on producing. It is on the andon board like any other call.
@@ -55,6 +62,7 @@ import simpy
 
 from mes_lab.layout_crew import path_length
 
+from .core import State
 from .traffic import PERSON, Plan, keep_seconds
 
 if TYPE_CHECKING:
@@ -63,6 +71,7 @@ if TYPE_CHECKING:
 
 OPERATOR, MAINTENANCE, IT, FOREMAN, LOGISTICS = "OPERATOR", "MAINTENANCE", "IT", "FOREMAN", "LOGISTICS"
 MANAGER = "MANAGER"           # the production manager (morning shift): the third level of the andon
+MATERIAL = "MATERIAL"         # the material handler: goods-in of the SMT reels and the milk run (receiving.py)
 ARRIVE_LEAD_S = 600.0         # the first of the next shift is at the door this long before it starts
 ARRIVE_SPREAD_S = 540.0       # and the others come one by one during that time (the ESD gates take 6 s each)
 HANDOVER_EARLY_S = 360.0      # a seat is handed over between this long before the start of the shift ...
@@ -77,6 +86,7 @@ PUT_BACK_S = 10.0
 TAKE_S = 6.0                  # repair: taking a piece out of the inbound rack, scanning it
 PUT_S = 5.0                   # putting it into the outbound rack / the scrap bin
 REQUEST_ROLES = ("MAINTENANCE", "IT", "FOREMAN", "LOGISTICS")
+MAX_ROUND = 8                 # a relief person covers the breaks of at most this many seats
 HANDOVER_MAX_S = 15 * 60.0    # a technician waits at most this long after the end of the shift for the successor
 UNCOAT_S = 15.0               # taking the ESD coat off in the lockers on the way home
 TRAIL = 16                    # walks kept for the live view (it shows the plant a moment late, see floor-core.js)
@@ -123,7 +133,8 @@ def _passes(pts: list[tuple[float, float]], people: list[tuple[float, float]], g
 class Person:
     __slots__ = ("id", "name", "role", "shift", "place", "walk", "act", "target", "on_site", "seat",
                  "home_seat", "available", "on_break", "busy", "base", "task", "esd_ok", "coat", "break_s", "carry",
-                 "trail", "hold", "sex", "idle_since", "arrived", "hold_at")
+                 "trail", "hold", "sex", "idle_since", "arrived", "hold_at", "skills", "absent", "shift_seat",
+                 "errand", "revoked")
 
     def __init__(self, pid: int, name: str, role: str, shift: str, sex: str = "m"):
         self.id = pid
@@ -152,6 +163,11 @@ class Person:
         self.hold_at = 0.0                                      # ... since
         self.idle_since = 0.0                                   # free and at the base since (logistics: the lounge)
         self.arrived = False                                    # this shift: through the entrance and at the base
+        self.skills: dict[str, float | None] = {}               # skill -> certificate valid until (sim s), None: no expiry
+        self.revoked: set[str] = set()                          # taken away in the MES: no course renews them
+        self.absent: str | None = None                          # this shift: "sick" | "holiday" | "training"
+        self.shift_seat: Seat | None = None                     # the seat this person holds this shift
+        self.errand = False                                     # a relief person on a check: the rounds wait for it
 
 
 class Seat:
@@ -163,6 +179,7 @@ class Seat:
         self.home = spec["home"]
         self.handover = spec.get("handover") or spec["home"]     # where the next person waits for the seat
         self.fixed = spec["fixed"]
+        self.skill: str = spec.get("skill") or spec["area"]
         self.attends: list[str] = spec["attends"]
         self.occupant: Person | None = None
         self.busy = simpy.Resource(env, capacity=1)
@@ -288,6 +305,18 @@ class Crew:
         self._names: set[str] = set()
         self.shift_times = {s.code: (s.start.strftime("%H:%M"), s.end.strftime("%H:%M")) for s in self.model.shifts}
         self.seat_order = sorted(self.seats, key=self._seat_sort)
+        self.skill_rng = plant.rng_for("skills")
+        self.absence_rng = plant.rng_for("absence")
+        self.round_rng = plant.rng_for("rounds")          # the rounds between the calls, apart from the rest
+        self.holder: dict[str, Person] = {}              # this shift: seat -> the person who holds it
+        self.uncovered: list[str] = []                  # this shift: seats nobody qualified could take
+        self.plan_until = 0.0                            # this shift: certificates must hold until then
+        self.relief_keys: dict[int, list[str]] = {}      # relief person -> the seats of their break round
+        self.solo: list[str] = []                        # this shift: seats whose breaks have no relief
+        self.break_reliefs: list[Person] = []            # this shift: the relief people left for the breaks
+        self.attendance: list[dict] = []                 # who came and who did not, for the MES (taken by the edge)
+        self.absent_log: list[tuple[str, int, str]] = []    # (shift, person, why) of every absence
+        self.renewals: list[tuple[int, str, float]] = []    # (person, skill, valid until): certificates renewed, for the MES
         self._build_roster()
         self._start_shift_zero()
         self.env.process(self._phone_escalations())
@@ -340,7 +369,7 @@ class Crew:
         used = {"maintenance": 0, "it": 0, "foreman": 0, "logistics": 0, "manager": 0}   # workstations taken by the earlier shifts
         for ordinal, (shift, staff) in enumerate(self.config.shifts.items()):
             ros: dict = {"primaries": {}, "reliefs": [], "maintenance": [], "it": [], "foreman": [], "logistics": [],
-                         "manager": []}
+                         "manager": [], "material": []}
             for key in self.seat_order:
                 person = self._person(OPERATOR, shift)
                 person.home_seat = self.seats[key]
@@ -350,6 +379,7 @@ class Crew:
             size = -(-len(keys) // max(1, len(ros["reliefs"])))
             for j, relief in enumerate(ros["reliefs"]):
                 relief.base = self._reserve_for(keys[j * size:(j + 1) * size], ordinal)
+                self.relief_keys[relief.id] = keys[j * size:(j + 1) * size]       # the seats they are trained for
             # everybody has a workstation of their own; the three shifts have different ones, so
             # nobody stands on the place of a colleague during the hand-over
             for role, key, prefix, count in ((MAINTENANCE, "maintenance", "workshop", staff.maintenance),
@@ -363,6 +393,180 @@ class Crew:
                     ros[key].append(person)
                 used[key] += count
             self.roster[shift] = ros
+        n = 0
+        for shift, staff in self.config.shifts.items():   # the material handlers come last, so that the people
+            for _ in range(staff.material):                # of the plant before them keep their names
+                person = self._person(MATERIAL, shift)
+                person.base = f"recv:{n}"
+                self.roster[shift]["material"].append(person)
+                n += 1
+        self._give_skills()
+
+    # ------------------------------------------------------------------ skills
+    def _give_skills(self) -> None:
+        """Everybody is qualified for the seat that is theirs; many for one or two more; relief people for
+        the seats they cover and more. The visual inspection and the repairs need a certificate that runs
+        out (an eye test once a year, IPC-7711/7721 every two years): a few run out within days."""
+        rng = self.skill_rng
+        cfg = self.config.skills
+        skills = sorted({seat.skill for seat in self.seats.values()})
+        expiring = set(cfg.certified)
+
+        def valid(skill: str) -> float | None:
+            if skill not in expiring:
+                return None
+            if rng.random() < cfg.expiring_share:
+                return rng.uniform(0.5, 6) * 86400             # runs out within days
+            return rng.uniform(30, cfg.valid_days) * 86400
+
+        for shift, ros in self.roster.items():
+            for key, person in ros["primaries"].items():
+                own = self.seats[key].skill
+                person.skills = {own: valid(own)}
+                for extra in rng.sample([k for k in skills if k != own and k != "REPAIR"], k=rng.choice((0, 0, 1, 1, 2))):
+                    person.skills[extra] = valid(extra)
+            for relief in ros["reliefs"]:
+                home = {self.seats[k].skill for k in self.relief_keys.get(relief.id, [])} or {"FA"}
+                pick = home | set(rng.sample(skills, k=rng.choice((1, 2))))
+                relief.skills = {k: valid(k) for k in sorted(pick)}
+
+    def attendance_rows(self) -> list[dict]:
+        """Who came to the shifts that started since the last report (for the MES)."""
+        clock = self.plant.clock
+        out = []
+        for entry in self.attendance:
+            for row in entry["rows"]:
+                out.append({"shift_start": clock.iso(entry["start"]), "shift": entry["shift"], **row})
+        return out
+
+    def attendance_sent(self, rows: int) -> None:
+        while rows and self.attendance:
+            rows -= len(self.attendance[0]["rows"])
+            self.attendance.pop(0)
+
+    def renewals_out(self) -> list[dict]:
+        clock = self.plant.clock
+        return [{"id": pid, "skill": skill, "until": clock.iso(until)} for pid, skill, until in self.renewals]
+
+    def renewals_sent(self, rows: int) -> None:
+        del self.renewals[:rows]
+
+    def roster_out(self) -> list[dict]:
+        """The people of the plant and their qualifications, for the MES (at the start of a run)."""
+        clock = self.plant.clock
+        out = []
+        for person in self.persons.values():
+            home = person.home_seat.key if person.home_seat else (person.base if person.role != OPERATOR else None)
+            out.append({"id": person.id, "name": person.name, "role": person.role, "shift": person.shift,
+                        "sex": person.sex, "home": home,
+                        "skills": {k: (clock.iso(v) if v is not None else None) for k, v in person.skills.items()}})
+        return out
+
+    def apply_skills(self, items: list[dict]) -> int:
+        """The qualifications people decided in the MES (granted, renewed, taken away): they win over what
+        the plant generated. The foreman plans with them from the next shift."""
+        clock, n = self.plant.clock, 0
+        for item in items:
+            person = self.persons.get(item["id"])
+            if person is None:
+                continue
+            until = (datetime.fromisoformat(item["until"]) - clock.start).total_seconds() if item.get("until") else None
+            person.skills[item["skill"]] = until
+            if item.get("revoked"):
+                person.revoked.add(item["skill"])
+            else:
+                person.revoked.discard(item["skill"])
+            n += 1
+        return n
+
+    def qualified(self, person: Person, skill: str, at: float) -> bool:
+        if skill not in person.skills:
+            return False
+        until = person.skills[skill]
+        return until is None or until > at
+
+    # ------------------------------------------------------------------ absences and the cover of the seats
+    def _plan_shift(self, shift: str) -> None:
+        """Who is off this shift, who holds which seat. Seats of the absent are covered by qualified
+        relief people, the machine seats first; then, for a machine seat still empty, a qualified desk
+        operator moves over, of the same area first (their desk seat stays empty: it matters less)."""
+        now = self.env.now
+        rng = self.absence_rng
+        ros = self.roster[shift]
+        cfg = self.config.absence
+        _, start, end = self.shift_window(now + ARRIVE_LEAD_S + 1)
+        until = end + HANDOVER_MAX_S                     # the certificate must hold until the hand-over
+        self._renew(shift, until)
+        # the only material handler or logistics worker of a shift is never missing: without them the SMT lines run
+        # out of reels and the trucks wait, so a colleague of another shift stands in (overtime)
+        sole = {role for role in (MATERIAL, LOGISTICS)
+                if sum(1 for p in self._all_in(shift) if p.role == role) <= 1}
+        for person in self._all_in(shift):
+            r = rng.random()
+            person.absent = "sick" if r < cfg.sick else "holiday" if r < cfg.sick + cfg.holiday else None
+            if person.role in sole:
+                person.absent = None
+            person.shift_seat = None
+            if person.absent:
+                self.absent_log.append((shift, person.id, person.absent))
+        holder: dict[str, Person] = {}
+        for key, person in ros["primaries"].items():
+            if not person.absent and not self.qualified(person, self.seats[key].skill, until):
+                person.absent = "training"            # the MES took the skill of their seat away: retraining
+                self.absent_log.append((shift, person.id, person.absent))
+            if not person.absent:
+                holder[key] = person
+        free = [r for r in ros["reliefs"] if not r.absent]
+        empty = sorted((k for k in self.seat_order if k not in holder),
+                       key=lambda k: (not self.seats[k].fixed, self.seat_order.index(k)))
+        covers: dict[int, int] = {}
+        for key in empty:
+            seat = self.seats[key]
+            able = [r for r in free if self.qualified(r, seat.skill, until)]
+            if not able:
+                continue
+            near = [r for r in able if r.base.startswith(f"reserve:{seat.line}:")] or able
+            relief = near[0]
+            free.remove(relief)
+            holder[key] = relief
+            covers[relief.id] = ros["primaries"][key].id
+        for key in [k for k in empty if k not in holder and self.seats[k].fixed]:
+            seat = self.seats[key]
+            movers = [(k, p) for k, p in holder.items() if not self.seats[k].fixed
+                      and k not in empty and self.qualified(p, seat.skill, until)]
+            movers.sort(key=lambda kp: self.seats[kp[0]].area != seat.area)      # the same area first
+            if movers:
+                k, person = movers[0]
+                del holder[k]
+                holder[key] = person
+                covers[person.id] = ros["primaries"][key].id
+        for key, person in holder.items():
+            person.shift_seat = self.seats[key]
+        self.holder = holder
+        self.uncovered = [k for k in self.seat_order if k not in holder]
+        self.break_reliefs = free
+        self.plan_until = until
+        rows = []
+        for person in self._all_in(shift):
+            seat = person.shift_seat.key if person.shift_seat else None
+            rows.append({"id": person.id, "status": (person.absent or "present").upper(), "seat": seat,
+                         "covers": covers.get(person.id)})
+        self.attendance.append({"shift": shift, "start": start, "rows": rows, "uncovered": list(self.uncovered)})
+
+    def _renew(self, shift: str, until: float) -> None:
+        """Certificates that run out: the operator of a seat that needs one goes to the eye test or the
+        course before it does; the certificate of another skill is renewed at the next course, some days
+        after it ran out (until then that person may not cover such a seat)."""
+        cfg = self.config.skills
+        now = self.env.now
+        for person in self._all_in(shift):
+            own = person.home_seat.skill if person.home_seat else None
+            for skill, valid in list(person.skills.items()):
+                if valid is None or skill in person.revoked:
+                    continue
+                if (skill == own and valid < until) or valid < now - cfg.course_days * 86400:
+                    person.skills[skill] = now + cfg.valid_days * 86400
+                    self.renewals.append((person.id, skill, person.skills[skill]))
 
     def _reserve_for(self, keys: list[str], ordinal: int) -> str:
         """Where the relief person of these seats waits: at the team desk of the first line."""
@@ -375,7 +579,7 @@ class Crew:
     def _all_in(self, shift: str) -> list[Person]:
         ros = self.roster[shift]
         out = list(ros["primaries"].values()) + ros["reliefs"]
-        for k in ("maintenance", "it", "foreman", "logistics", "manager"):
+        for k in ("maintenance", "it", "foreman", "logistics", "manager", "material"):
             out += ros[k]
         return out
 
@@ -537,9 +741,13 @@ class Crew:
         self.gate_busy[gate] = False
         self._queue_moved(gate)
         self.esd_log.append((person.id, self.env.now))
-        if person.role == OPERATOR:
+        if person.role in (OPERATOR, MATERIAL):                 # ESD clothes of their own, no coat
             person.esd_ok = True
         else:
+            for _ in range(60):                                 # one person at a locker: wait for a free one
+                if self._free("locker", 4):
+                    break
+                yield self.env.timeout(3)
             slot = self._grab("locker", 4, person)
             yield from self.walk(person, slot)
             person.act = "coat"
@@ -600,10 +808,16 @@ class Crew:
 
     # ------------------------------------------------------------------ shifts
     def _arrive(self, shift: str, instant: bool = False) -> None:
-        """People of a shift come on site (at the door; at once to their places when `instant`)."""
+        """People of a shift come on site (at the door; at once to their places when `instant`); the
+        absent stay home."""
         ros = self.roster[shift]
         start_t = self.window[0]
+        self._plan_shift(shift)
         for person in self._all_in(shift):
+            if person.absent:
+                person.on_site = False
+                person.act = "off"
+                continue
             person.on_site = instant                      # the others come through the door later
             person.on_break = False
             person.busy = False
@@ -623,8 +837,8 @@ class Crew:
 
     def _settle(self, person: Person, ros: dict) -> None:
         """Put a person where he waits at the start (used for the first shift)."""
-        if person.home_seat is not None:
-            seat = person.home_seat
+        if person.shift_seat is not None:
+            seat = person.shift_seat
             seat.occupant = person
             person.seat = seat
             self._settle_at(person, seat.home)
@@ -634,9 +848,9 @@ class Crew:
             person.act = "idle"
         else:
             self._settle_at(person, person.base)
-            person.available = person.role in (MAINTENANCE, IT, LOGISTICS)
+            person.available = person.role in (MAINTENANCE, IT, LOGISTICS, MATERIAL)
             person.act = "idle"
-        person.esd_ok = person.role == OPERATOR
+        person.esd_ok = person.role in (OPERATOR, MATERIAL)
         person.coat = person.role in (MAINTENANCE, IT, FOREMAN, MANAGER)
 
     def _take_post(self, person: Person, ros: dict, start_t: float):
@@ -647,8 +861,8 @@ class Crew:
         person.place = "street:log" if person.role == LOGISTICS else "door"
         person.act = "walk"
         yield from self._enter(person)
-        if person.home_seat is not None:
-            seat = person.home_seat
+        if person.shift_seat is not None:
+            seat = person.shift_seat
             yield from self.walk(person, seat.handover)   # beside the seat: the colleague is still there
             person.act = "idle"
             person.arrived = True
@@ -677,7 +891,7 @@ class Crew:
             yield from self.walk(person, person.base)
             person.act = "idle"
             person.arrived = True
-            person.available = person.role in (MAINTENANCE, IT, LOGISTICS)
+            person.available = person.role in (MAINTENANCE, IT, LOGISTICS, MATERIAL)
             if person.available:
                 self._became_free(person)
 
@@ -686,7 +900,7 @@ class Crew:
         if person.task == "leaving" or not person.on_site:
             return
         person.task = "leaving"
-        while person.busy or (person.seat is not None and person.seat.occupant is person):
+        while person.busy or person.errand or (person.seat is not None and person.seat.occupant is person):
             yield self.env.timeout(20)
         person.available = False
         person.act = "walk"
@@ -694,6 +908,10 @@ class Crew:
             yield from self.walk(person, "street:log")
         else:
             if person.coat:                                # the ESD coat stays in the locker
+                for _ in range(60):
+                    if self._free("locker", 4):
+                        break
+                    yield self.env.timeout(3)
                 slot = self._grab("locker", 4, person)
                 yield from self.walk(person, slot)
                 person.act = "uncoat"
@@ -725,14 +943,30 @@ class Crew:
     def _arrive_next(self, shift: str, outgoing: str) -> None:
         self._arrive(shift)
         self._start_routines(shift)
+        for key in self.uncovered:
+            self.env.process(self._vacate(self.seats[key], self.window[0]))
         # people of the old shift that hold no seat or call leave now
         for person in self._all_in(outgoing):
             if person.on_site and person.seat is None and not person.busy and person.role != OPERATOR:
                 self.env.process(self._retire(person, shift))
-            elif person.on_site and person.role == OPERATOR and person.home_seat is None and person.seat is None:
+            elif person.on_site and person.role == OPERATOR and person.seat is None:
                 self.env.process(self._leave(person))
             elif person.role in (FOREMAN, MANAGER) and person.on_site:
                 self.env.process(self._retire(person, shift))
+
+    def _vacate(self, seat: Seat, start_t: float):
+        """SimPy process: nobody of the new shift can take this seat; its person goes home at the hand-over
+        and the seat stays empty for the shift."""
+        hand_at = start_t + self.rng.uniform(-HANDOVER_EARLY_S / 2, HANDOVER_LATE_S / 2)
+        if hand_at > self.env.now:
+            yield self.env.timeout(hand_at - self.env.now)
+        with seat.busy.request() as req:
+            yield req
+            old = seat.occupant
+            if old is not None and old.shift != self.current_shift:
+                seat.occupant = None
+                old.seat = None
+                self.env.process(self._leave(old))
 
     def _retire(self, person: Person, new_shift: str):
         """A technician, IT, the foreman or a logistics worker of the old shift hands over to their own
@@ -741,7 +975,7 @@ class Crew:
         waited for, at most HANDOVER_MAX_S past the end of the shift; work in hand is finished first."""
         person.available = False
         mine = [p for p in self._all_in(person.shift) if p.role == person.role]
-        theirs = [p for p in self._all_in(new_shift) if p.role == person.role]
+        theirs = [p for p in self._all_in(new_shift) if p.role == person.role and not p.absent]
         successor = theirs[mine.index(person) % len(theirs)] if theirs and person in mine else None
         start = self.window[0]                                   # the new shift starts (= the old one ends)
         hand_at = start + self.rng.uniform(-HANDOVER_EARLY_S / 2, HANDOVER_LATE_S / 2)
@@ -758,33 +992,217 @@ class Crew:
     def _start_routines(self, shift: str) -> None:
         ros = self.roster[shift]
         start, end = self.window
-        # breaks of the operators: reliefs go round their seats
-        keys = self.seat_order
-        count = max(1, len(ros["reliefs"]))
-        size = -(-len(keys) // count)
-        for j, relief in enumerate(ros["reliefs"]):
-            seats = [self.seats[k] for k in keys[j * size:(j + 1) * size]]
+        # breaks of the operators: the relief people left over go round the seats (at most MAX_ROUND each);
+        # the operators of the seats beyond that take their breaks without a relief (the machine waits)
+        keys = [k for k in self.seat_order if k in self.holder]
+        rounds = self._break_rounds(keys, self.break_reliefs)
+        for relief, seats in rounds.items():
             if seats:
                 self.env.process(self._relief_rounds(relief, seats, shift, start, end))
+        covered = {s.key for seats in rounds.values() for s in seats}
+        self.solo = [k for k in keys if k not in covered]
+        for key in self.solo:
+            self.env.process(self._solo_breaks(self.holder[key], self.seats[key], shift, start, end))
+        def came(people: list[Person]) -> list[Person]:
+            return [p for p in people if not p.absent]
         for role in ("maintenance", "it", "logistics"):
             for k, person in enumerate(ros[role]):
                 pool = self.pools[{"maintenance": MAINTENANCE, "it": IT, "logistics": LOGISTICS}[role]]
                 if person not in pool.persons:
                     pool.persons.append(person)
-                self.env.process(self._technician_breaks(person, k, shift, start, end))
-        for person in ros["foreman"]:
+                if not person.absent:
+                    self.env.process(self._technician_breaks(person, k, shift, start, end))
+        for person in came(ros["foreman"]):
             self.env.process(self._foreman(person, shift, start, end))
-        for person in ros["manager"]:
+        for person in came(ros["manager"]):
             self.env.process(self._manager(person, shift, start, end))
-        for person in ros["maintenance"] + ros["it"]:
+        for person in came(ros["maintenance"] + ros["it"]):
             self.env.process(self._join_meeting(person, shift, start))
         if self.n_lounge:
-            for person in ros["logistics"]:
+            for person in came(ros["logistics"]):
                 self.env.process(self._lounge(person, shift))
-        for person in list(ros["primaries"].values()) + ros["maintenance"] + ros["it"]:
+        for k, person in enumerate(came(ros["material"])):
+            self.env.process(self._technician_breaks(person, k + 1, shift, start, end))
+            self.env.process(self._material_handler(person, shift))
+        for person in list(self.holder.values()) + came(ros["maintenance"] + ros["it"] + ros["material"]):
             self.env.process(self._wc_trips(person, shift, start, end))
+        rounds = self.config.rounds
+        if rounds.operator_min > 0:
+            for key in keys:                                 # the desk seats check the machines of their line
+                if not self.seats[key].fixed:
+                    self.env.process(self._operator_rounds(self.seats[key], shift, start, end))
+            for relief in self.break_reliefs:                # relief people between their break rounds
+                self.env.process(self._relief_checks(relief, shift, start, end))
+        if rounds.maintenance_min > 0:
+            for k, person in enumerate(came(ros["maintenance"])):
+                self.env.process(self._inspection_rounds(person, k, shift, start, end))
+
+    def _material_handler(self, person: Person, shift: str):
+        """SimPy process: the work of a material handler (receiving.py; the plant builds it after the crew)."""
+        yield self.env.timeout(0)
+        yield from self.plant.receiving.work(person, shift)
+
+    # ----- rounds between the calls (config crew.rounds)
+    def _calm(self, code: str) -> bool:
+        """A machine one may stand at for a check: no breakdown, no call open at it."""
+        station = self.plant.by_code.get(code)
+        return (station is not None and station.call is None and station.state not in (State.DOWN, State.MAINTENANCE)
+                and not any(c.station == code for c in self.calls))
+
+    def _operator_rounds(self, seat: Seat, shift: str, start: float, end: float):
+        """SimPy process: whoever sits in a desk seat goes now and then to a machine of the seat and checks it
+        (state, feeders, trays, a look at the screen; a handheld terminal). It holds the seat like a minor stop
+        does: the stops, a break or the hand-over wait for it, and it goes back unless the next one is waiting."""
+        rule = self.config.rounds
+        rng = self.round_rng
+        every, check_s = rule.operator_min * 60, rule.check_min * 60
+        yield self.env.timeout(max(0.0, start + 20 * 60 - self.env.now) + rng.uniform(0, every))
+        while self.current_shift == shift and self.env.now < end - 20 * 60:
+            codes = [c for c in seat.attends if f"spot:{c}" != seat.home and self._calm(c)]
+            if codes:
+                code = rng.choice(codes)
+                with seat.busy.request() as req:
+                    yield req
+                    person = seat.occupant
+                    if person is not None and not person.on_break and self.current_shift == shift and self._calm(code):
+                        person.act = "walk"
+                        yield from self.walk(person, f"spot:{code}")
+                        person.act, person.target = "check", code
+                        until = self.env.now + check_s * rng.uniform(0.7, 1.3)
+                        while self.env.now < until and not seat.busy.queue:
+                            yield self.env.timeout(2)     # a machine that stops, a break, the hand-over: at once
+                        person.act, person.target = "post", None
+                        if person.place != seat.home and not seat.busy.queue:
+                            person.act = "walk"
+                            yield from self.walk(person, seat.home)
+                            person.act = "post"
+            yield self.env.timeout(every * rng.uniform(0.7, 1.3))
+
+    def _check_codes(self, line: str) -> list[str]:
+        """The machines of the desk seats of a line a relief person may check, from the place beside the operator's
+        (not the machines whose place is a seat, not the first of the line where the foreman stops)."""
+        homes = {seat.home for seat in self.seats.values()}
+        cells = self.layout.lines.get(line, {}).get("cells") or []
+        first = cells[0]["stations"][0] if cells and cells[0]["stations"] else None
+        return [c for seat in self.seats.values() if seat.line == line and not seat.fixed
+                for c in seat.attends if f"spot:{c}" not in homes and c != first]
+
+    def _relief_checks(self, relief: Person, shift: str, start: float, end: float):
+        """SimPy process: a relief person between the break rounds goes along the line they wait at and checks a
+        machine, from beside the operator's place, then back to the team desk. Not near the start of a round
+        (the round waits for a check that runs, see _relief_rounds), not at the end of the shift."""
+        rule = self.config.rounds
+        rng = self.round_rng
+        every, check_s = rule.operator_min * 60, rule.check_min * 60
+        parts = relief.base.split(":")
+        codes = self._check_codes(parts[1]) if parts[0] == "reserve" and len(parts) == 3 else []
+        if not codes:
+            return
+        rounds = [start + b.start * 60 for b in self.config.breaks]
+        yield from self._arrived(relief, shift)
+        yield self.env.timeout(rng.uniform(0, every))
+        while self.current_shift == shift and self.env.now < end - 30 * 60:
+            now = self.env.now
+            near = any(r - 12 * 60 <= now <= r + 5 * 60 for r in rounds)
+            ready = (relief.on_site and relief.seat is None and not relief.on_break and relief.task is None
+                     and relief.walk is None and relief.place == relief.base and relief.act == "idle")
+            free = [c for c in codes if self._calm(c) and f"chk:{c}" not in self.held]
+            if near or not ready or not free:
+                yield self.env.timeout(60)
+                continue
+            code = rng.choice(free)
+            key = f"chk:{code}"
+            self.held[key] = relief.id
+            relief.errand = True
+            relief.act = "walk"
+            yield from self.walk(relief, f"hand:spot:{code}")
+            relief.act, relief.target = "check", code
+            until = self.env.now + check_s * rng.uniform(0.7, 1.3)
+            while self.env.now < until and self.current_shift == shift and self._calm(code):
+                yield self.env.timeout(5)                 # a breakdown there: the technician and the foreman come
+            relief.target = None
+            self._drop(key, relief)
+            if self.current_shift == shift and relief.on_site:
+                relief.act = "walk"
+                yield from self.walk(relief, relief.base)
+            relief.act = "idle"
+            relief.errand = False
+            yield self.env.timeout(every * rng.uniform(0.7, 1.3))
+
+    def _inspection_rounds(self, person: Person, k: int, shift: str, start: float, end: float):
+        """SimPy process: a maintenance technician walks an inspection round along one line now and then (noise,
+        leaks, filters, lubrication): a few machines, some minutes each, from the technician's place beside the
+        operator's. Free all the time at the machines: a call takes them from there at once (as at the meeting)."""
+        rule = self.config.rounds
+        rng = self.round_rng
+        every, look_s = rule.maintenance_min * 60, rule.inspect_min * 60
+        lines = [c for c, info in self.layout.lines.items() if info["kind"] in ("SMT", "FA", "PACK")]
+        yield from self._arrived(person, shift)
+        yield self.env.timeout(max(0.0, start + (40 + 15 * k) * 60 - self.env.now))
+        while self.current_shift == shift and self.env.now < end - 45 * 60:
+            if not (lines and person.on_site and person.available and person.place == person.base and person.walk is None):
+                yield self.env.timeout(60)
+                continue
+            line = rng.choice(lines)
+            codes = [c for cell in self.layout.lines[line]["cells"] for c in cell["stations"]]
+            stops = sorted(rng.sample(codes, min(rule.stops, len(codes))), key=codes.index)   # along the line
+            taken = False
+            for code in stops:
+                if not self._calm(code) or f"chk:tech:{code}" in self.held:
+                    continue
+                spot = f"tech:{code}"
+                person.available = False
+                person.act = "walk"
+                yield from self.walk(person, spot)
+                if self.current_shift != shift or person.task == "leaving":
+                    taken = True
+                    break
+                if not self._calm(code):
+                    continue
+                self.held[f"chk:tech:{code}"] = person.id
+                person.act = "inspect"
+                self._became_free(person)                         # a call takes them from here
+                until = self.env.now + look_s * rng.uniform(0.7, 1.3)
+                while self.env.now < until and person.available and person.place == spot and self._calm(code):
+                    yield self.env.timeout(5)                     # (a call of IT there: they step away)
+                self._drop(f"chk:tech:{code}", person)
+                if not (person.available and person.place == spot):
+                    taken = True                                  # a call or the break took them
+                    break
+            if not taken and person.on_site and self.current_shift == shift:
+                person.available = False
+                person.act = "walk"
+                yield from self.walk(person, person.base)
+                person.act = "idle"
+                self._became_free(person)
+            yield self.env.timeout(every * rng.uniform(0.7, 1.3))
 
     # ----- operator breaks
+    def _break_rounds(self, keys: list[str], reliefs: list[Person]) -> dict[Person, list[Seat]]:
+        """Which seats every relief person goes round on a break: only seats they are qualified for, at
+        most MAX_ROUND and about the same number each. The machine seats are given out first (a desk seat
+        without a relief only waits for its minor stops); a relief takes the seats of their own round
+        first, then those on the line of the seat before (a short way round)."""
+        out: dict[Person, list[Seat]] = {r: [] for r in reliefs}
+        if not reliefs:
+            return out
+        cap = min(MAX_ROUND, -(-len(keys) // len(reliefs)))
+        until = self.plan_until
+        for key in sorted(keys, key=lambda k: (not self.seats[k].fixed, self.seat_order.index(k))):   # machine seats first
+            seat = self.seats[key]
+            able = [r for r in reliefs if len(out[r]) < cap and self.qualified(r, seat.skill, until)]
+            if not able:
+                continue
+
+            def far(r: Person) -> tuple:
+                last = out[r][-1] if out[r] else None
+                return (key not in self.relief_keys.get(r.id, ()),             # the seats of their own round first
+                        last is not None and last.line != seat.line, len(out[r]))
+            out[min(able, key=far)].append(seat)
+        for seats in out.values():
+            seats.sort(key=lambda st: self.seat_order.index(st.key))              # the way round
+        return out
+
     def _relief_rounds(self, relief: Person, seats: list[Seat], shift: str, start: float, end: float):
         for rule in self.config.breaks:
             round_start = start + rule.start * 60
@@ -794,9 +1212,11 @@ class Crew:
             for seat in seats:
                 if self.current_shift != shift or self.env.now + rule.length * 60 + 180 > end:
                     break
-                primary = self.roster[shift]["primaries"][seat.key]
-                if not primary.on_site:
+                primary = self.holder.get(seat.key)
+                if primary is None or not primary.on_site:
                     continue
+                while relief.errand:                                  # on a check at a machine: it ends first
+                    yield self.env.timeout(5)
                 yield from self.walk(relief, seat.handover)          # beside the seat
                 if self.current_shift != shift:
                     break
@@ -812,11 +1232,12 @@ class Crew:
                     primary.seat = None
                     primary.act = "break"
                     primary.on_break = True
-                returned = self.env.event()
-                self.env.process(self._take_break(primary, seat, rule, returned, relief))
-                yield self.env.timeout(0.05)                          # the colleague sets off first ...
-                yield from self._steps_aside(relief, primary, seat.home)
-                yield from self.walk(relief, seat.home)               # ... then the relief sits in
+                    returned = self.env.event()
+                    self.env.process(self._take_break(primary, seat, rule, returned, relief))
+                    yield self.env.timeout(0.05)                      # the colleague sets off first ...
+                    yield from self._steps_aside(relief, primary, seat.home)
+                    yield from self.walk(relief, seat.home)           # ... then the relief sits in (holding the
+                                                                      # seat: no machine calls them away meanwhile)
                 yield returned                                        # the colleague is back beside the seat
                 with seat.busy.request() as req:
                     yield req
@@ -834,6 +1255,38 @@ class Crew:
                     relief.act = "idle"
         if self.current_shift != shift and relief.on_site and relief.seat is None:
             self.env.process(self._leave(relief))
+
+    def _solo_breaks(self, person: Person, seat: Seat, shift: str, start: float, end: float):
+        """SimPy process: an operator whose seat no relief person covers takes the breaks anyway; the seat
+        is empty meanwhile (the machines that need the person wait)."""
+        yield from self._arrived(person, shift)
+        for rule in self.config.breaks:
+            at = start + (rule.start + self.rng.uniform(0, 40)) * 60
+            if at < self.env.now - 5 * 60:
+                continue
+            yield self.env.timeout(max(0.0, at - self.env.now))
+            if self.current_shift != shift or self.env.now + rule.length * 60 + 180 > end:
+                return
+            while person.task == "wc":
+                yield self.env.timeout(10)
+            with seat.busy.request() as req:
+                yield req
+                if seat.occupant is not person:
+                    continue
+                seat.occupant = None
+                person.seat = None
+                person.on_break = True
+            returned = self.env.event()
+            self.env.process(self._take_break(person, seat, rule, returned))
+            yield returned
+            with seat.busy.request() as req:
+                yield req
+                if seat.occupant is None and person.shift == self.current_shift:
+                    seat.occupant = person
+                    person.seat = seat
+            if person.seat is seat:
+                yield from self.walk(person, seat.home)
+                person.act = "post"
 
     def _take_break(self, person: Person, seat: Seat, rule, returned: simpy.Event, relief: Person | None = None):
         yield from self._rest(person, rule.length * 60, seat.handover, rule.kind)
@@ -869,7 +1322,7 @@ class Crew:
         if not self._free(cabins, self.n_wc[person.sex]):
             return False                                   # all cabins taken: try again a bit later
         if person.role == OPERATOR:
-            seat = person.home_seat
+            seat = person.shift_seat
             if seat is None or person.on_break:
                 return False
             with seat.busy.request() as req:
@@ -951,6 +1404,7 @@ class Crew:
         down at the table in the corner (cards with a colleague, a book alone, see snapshot) and stays
         available: the next truck calls them from there."""
         idle_s = self.config.lounge.after_min * 60
+        yield from self._arrived(person, shift)           # the routines start while the shift is still on the way in
         while self.current_shift == shift and person.on_site:
             yield self.env.timeout(20)
             if not (person.available and person.place == person.base and person.walk is None)                     or person.task == "leaving" or self.env.now - person.idle_since < idle_s:
@@ -1157,9 +1611,60 @@ class Crew:
                     self._escalated(call, 3, None)
 
     # ------------------------------------------------------------------ what stations ask for
-    def attend(self, station: Station, duration: float, kind: str = "minor", on_start=None):
+    def fetch(self, station: Station, place: str, carry: str, take, check, work_s: float):
+        """SimPy generator: the operator of the station's seat fetches material for it (SMT material, see
+        material.py): walks to `place` (the reel rack of the line, the thaw cabinet), takes what `take()`
+        gives (a function or a generator), carries it to the machine and scans it there; `check(thing)` (a
+        generator) says whether the MES accepts it, if not the person goes back for the right one. Then
+        `work_s` at the machine (a splice: the machine places on meanwhile; a jar: the printer waits) and
+        back to the seat. Waits while nobody holds the seat. Returns what was taken."""
+        seat = self.seat_of.get(station.code)
+        if seat is None:
+            return (yield from self._fetch(None, station, place, carry, take, check, work_s))
+        while True:
+            with seat.busy.request() as req:
+                yield req
+                person = seat.occupant                    # (in the same hold of the seat, see attend)
+                if person is not None:
+                    got = yield from self._fetch(person, station, place, carry, take, check, work_s)
+                    if person.place != seat.home and not seat.busy.queue:
+                        person.act = "walk"
+                        yield from self.walk(person, seat.home)
+                        person.act = "post"
+                    return got
+            yield self.env.timeout(10)
+
+    def _fetch(self, person: Person | None, station: Station, place: str, carry: str, take, check, work_s: float):
+        refused = 0
+        while True:
+            if refused >= 2:                              # refused again and again: a closer look at the rack
+                yield self.env.timeout(60.0 * min(refused, 10))
+            if person is not None:
+                person.act = "walk"
+                yield from self.walk(person, place)
+                person.act = "take"
+            got = take()
+            if hasattr(got, "send"):                     # a generator: it may wait (a jar still thawing)
+                got = yield from got
+            yield self.env.timeout(TAKE_S)
+            if person is not None:
+                person.carry = carry
+                person.act = "walk"
+                yield from self.walk(person, f"spot:{station.code}")
+                person.act, person.target = "fix", station.code
+            if (yield from check(got)):
+                break
+            refused += 1
+        yield self.env.timeout(work_s)
+        if person is not None:
+            person.carry, person.target = None, None
+            person.act = "post"
+        return got
+
+    def attend(self, station: Station, duration: float, kind: str = "minor", on_start=None, act: str = "fix"):
         """SimPy generator: the operator of the station's seat comes (one machine at a time),
-        works `duration` seconds, and goes back. While the operator is away (toilet) the machine waits."""
+        works `duration` seconds (`act`: "fix", "setup" for a changeover), and goes back. While the operator
+        is away (toilet) the machine waits."""
         seat = self.seat_of.get(station.code)
         if seat is None:
             yield self.env.timeout(duration)
@@ -1168,22 +1673,10 @@ class Crew:
         station.attendance = job
         waited = 0.0
         while True:
-            with seat.busy.request() as req:
-                yield req
-                person = seat.occupant
-                if person is not None or waited >= ATTEND_WAIT_S:
-                    break
-            yield self.env.timeout(10)                    # nobody sits there right now: wait for her
-            waited += 10
-        if person is None:
-            job.ph = "fix"
-            if on_start:
-                on_start()
-            yield self.env.timeout(duration)
-        else:
-            with seat.busy.request() as req:
-                yield req
-                person = seat.occupant or person
+            req = seat.busy.request()
+            yield req
+            person = seat.occupant                        # (in the same hold of the seat: nobody leaves it meanwhile)
+            if person is not None:
                 spot = f"spot:{station.code}"
                 job.person = person
                 for _ in range(90):                       # just taken over: the colleague first steps away
@@ -1195,17 +1688,57 @@ class Crew:
                     person.act = "walk"
                     yield from self.walk(person, spot)
                 job.ph = "fix"
-                person.act, person.target = "fix", station.code
+                person.act, person.target = act, station.code
                 if on_start:
                     on_start()
                 yield self.env.timeout(duration)
                 person.target = None
                 person.act = "post"
                 if person.place != seat.home and not seat.busy.queue:
-                    person.act = "walk"
-                    yield from self.walk(person, seat.home)
-                    person.act = "post"
+                    # back to the seat, still holding it (the next call waits for the walk as before), while
+                    # the machine goes on already
+                    self.env.process(self._back_to_seat(seat, req, person))
+                else:
+                    seat.busy.release(req)
+                break
+            seat.busy.release(req)
+            if waited >= ATTEND_WAIT_S:                   # nobody came: the machine gets on with it alone
+                job.ph = "fix"
+                if on_start:
+                    on_start()
+                yield self.env.timeout(duration)
+                break
+            yield self.env.timeout(10)                    # nobody sits there right now: wait for her
+            waited += 10
         station.attendance = None
+
+    def _back_to_seat(self, seat, req, person: Person):
+        """SimPy process: after the work at a machine the operator walks back to the seat; the hold of the seat
+        (`req`) is handed over from `attend` and released at the seat."""
+        try:
+            person.act = "walk"
+            yield from self.walk(person, seat.home)
+            person.act = "post"
+        finally:
+            seat.busy.release(req)
+
+    def staffed(self, station: Station):
+        """SimPy generator: a machine worked by hand (loading, inspection, packing, repair) waits while
+        nobody sits at it (an empty seat of the shift, a break without a relief, the toilet)."""
+        seat = self.seat_of.get(station.code)
+        if seat is None or not station.type.manual:
+            return
+        waited = False
+        while seat.occupant is None:
+            if not waited:
+                station.set_state(State.STARVED, "NO_OPERATOR")
+                waited = True
+            yield self.env.timeout(10)
+
+    def operator_at(self, station: Station) -> Person | None:
+        """The person logged in at a machine: the one who holds its seat right now."""
+        seat = self.seat_of.get(station.code)
+        return seat.occupant if seat is not None else None
 
     def service(self, station: Station, reason: str, work_s: float, kind: str = "repair"):
         """SimPy generator: a technician repairs / services the machine. The call is open
@@ -1257,6 +1790,11 @@ class Crew:
             self.env.process(self._request(call, work_s, bool(spec.get("meter"))))
         return call
 
+    def _fixes_storm(self, call: Call) -> None:
+        """Maintenance or IT called to an AOI in a false call storm (a training scenario) re-teaches it."""
+        if call.role in (MAINTENANCE, IT) and self.plant.fault_on("AOI_STORM", call.station):
+            self.plant.end_fault(f"AOI_STORM:{call.station}", f"fixed by {call.role.lower()}")
+
     def _request(self, call: Call, work_s: float, meter: bool):
         person = yield from self.pools[call.role].acquire(f"tech:{call.station}")
         person.task = call.station
@@ -1272,6 +1810,7 @@ class Crew:
             elif person.carry is None:
                 person.carry = "tools"
         yield from self._answer(person, call, work_s, "fix")
+        self._fixes_storm(call)
         yield from self.release(person)
 
     def _answer(self, person: Person, call: Call, work_s: float, act: str):
@@ -1364,13 +1903,15 @@ class Crew:
         now = self.env.now
         keep_s = keep_seconds(self.plant.speed)
         people = []
-        counts: dict[str, dict] = {c: {"on_site": 0, "posts": 0, "break": 0, "walking": 0, "roster": 0,
+        counts: dict[str, dict] = {c: {"on_site": 0, "posts": 0, "break": 0, "walking": 0, "roster": 0, "absent": 0,
                                        "operators": 0, "technicians": 0, "other": 0}
                                    for c in self.roster}
         lounging = sum(1 for p in self.persons.values() if p.on_site and p.act == "lounge" and p.walk is None)
         for person in self.persons.values():
             c = counts[person.shift]
             c["roster"] += 1
+            if person.absent:
+                c["absent"] += 1                          # off in their last shift (sick, on holiday)
             if not person.on_site:
                 continue
             c["on_site"] += 1
@@ -1420,6 +1961,8 @@ class Crew:
                     rec["pc"] = 1                          # works at the computer
             if person.seat is not None:
                 rec["seat"] = person.seat.key
+            if person.skills:
+                rec["sk"] = sorted(person.skills)
             people.append(rec)
         calls = [{"st": c.station, "r": c.reason, "role": c.role[:3], "kind": c.kind, "t": round(c.since, 1),
                   "ph": c.ph, "p": c.person.id if c.person else None, "lv": self.level(c),
@@ -1428,6 +1971,10 @@ class Crew:
         shifts = {code: {**counts[code], "start": self.shift_times[code][0], "end": self.shift_times[code][1]}
                   for code in counts}
         meeting = any(p.act == "meeting" and p.walk is None and p.on_site for p in self.persons.values())
+        cur = self.roster.get(self.current_shift, {})
+        absent = [{"i": p.id, "n": p.name, "r": p.role[:3], "why": p.absent} for p in self._all_in(self.current_shift)
+                  if p.absent] if cur else []
         return {"people": people, "crew": {"now": self.current_shift, "shifts": shifts, "calls": calls,
                                            "answered": list(self.requests_done)[-6:],
-                                           "esc": list(self.escalations)[-12:], "meeting": meeting}}
+                                           "esc": list(self.escalations)[-12:], "meeting": meeting,
+                                           "absent": absent, "uncovered": list(self.uncovered)}}

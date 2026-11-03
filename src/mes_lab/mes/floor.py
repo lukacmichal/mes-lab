@@ -9,9 +9,12 @@ from __future__ import annotations
 
 import itertools
 import json
+import logging
 import time
 from collections import deque
 from datetime import UTC, datetime, timedelta
+
+log = logging.getLogger("mes_lab.mes")
 
 
 class FloorStore:
@@ -82,6 +85,7 @@ class SimControl:
     def _expire(self) -> None:
         if self.paused and self._clock() - self.paused_since > self.MAX_PAUSE_S:
             self.paused = False
+            log.info("plant control: the pause ran out, the plant runs again")
 
     def pause(self, paused: bool, by: str) -> None:
         self.paused = paused
@@ -89,6 +93,7 @@ class SimControl:
         if paused:
             self.paused_since = self._clock()
             self.goto = None                  # a pause stops a jump too
+        log.info("plant control: %s by %s", "paused" if paused else "runs again", by)
 
     def jump(self, until: datetime, then: str, now: datetime, by: str) -> dict:
         if until.tzinfo is None:
@@ -99,14 +104,18 @@ class SimControl:
             raise ValueError("at most seven days ahead")
         self.goto = {"until": until.astimezone(UTC), "then": then, "from": now.astimezone(UTC), "by": by}
         self.paused = False
+        log.info("plant control: runs ahead from %s to %s, then %s, by %s", now.isoformat(), until.isoformat(), then, by)
         return self.goto
 
-    def cancel(self) -> None:
+    def cancel(self, by: str | None = None) -> None:
+        if self.goto:
+            log.info("plant control: the jump to %s stopped by %s", self.goto["until"].isoformat(), by)
         self.goto = None
 
     def reached(self, plant_time: datetime) -> None:
         """The plant reported this time: a jump that got there is done (and pauses when it was asked to)."""
         if self.goto and plant_time >= self.goto["until"] - timedelta(seconds=0.5):
+            log.info("plant control: the plant got to %s", self.goto["until"].isoformat())
             if self.goto["then"] == "pause":
                 self.pause(True, self.goto["by"])
             self.goto = None

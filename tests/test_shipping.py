@@ -29,9 +29,9 @@ def run(model):
         notes.append(dict(shipment))
         add(shipment)
 
-    def _take(customer):
+    def _take(customer, refused):
         waiting = [p for m in shipping._materials(customer) for p in plant.stock[m]]
-        pallet = take(customer)
+        pallet = take(customer, refused)
         if pallet is not None:
             taken.append({"id": pallet.id, "serial": pallet.serial, "material": pallet.material, "customer": customer,
                           "older_left": [p.id for p in waiting if p.id < pallet.id], "t": plant.env.now})

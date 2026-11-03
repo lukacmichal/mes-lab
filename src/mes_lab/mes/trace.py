@@ -59,6 +59,10 @@ class Trace:
     def __init__(self, model: PlantModel):
         self.model = model
         self.tz = ZoneInfo(model.plant.timezone)
+        self._skills: dict[str, str] | None = None
+        self.material = None                       # mes/material.py, set by the app
+        self.labels = None                         # mes/labels.py, set by the app
+        self.qualifications = None                 # mes/qualifications.py, set by the app
         self.station_ids: dict[str, int] = {}
         self.station_info: dict[int, tuple[str, str]] = {}  # id -> (code, type)
         self.material_ids: dict[str, int] = {}
@@ -194,6 +198,9 @@ class Trace:
                 if not reworked:
                     piece.status = "NOK"
                     piece.updated_at = r.end
+            if (r.step == "BOX_LABEL" and r.result == "PASS" and unit.kind == "KLT" and unit.status == "CLOSED"
+                    and self.labels is not None):
+                self.labels.print(session, unit, r.end, r.station)        # the box label of a full box
             material = self.material_of(unit)
             completed = list(unit.completed or [])
             if r.result == "PASS" and r.step not in completed:
@@ -245,6 +252,7 @@ class Trace:
         if not self.material_codes:
             self._load(session)
         try:
+            self.qualified(session, req.operator, step, req.plant_time)
             if req.consume:
                 result = self._start_unit(session, req, job, station_id)
             elif req.serial is None:
@@ -254,6 +262,7 @@ class Trace:
                 if unit is None:
                     raise Refusal("UNKNOWN", f"{req.serial} is not known to the MES")
                 self._gate(session, unit, step, stype, job)
+                self.station_ready(session, stype, station_id, req.plant_time)
                 unit.station_id = station_id
                 unit.updated_at = req.plant_time
                 if stype.kind == "pack":
@@ -281,6 +290,96 @@ class Trace:
                 db.Hold.status == "ACTIVE", db.Hold.kind == "WORK_ORDER",
                 db.Hold.work_order_id == unit.work_order_id).limit(1))
         return hold
+
+    def shift_start(self, when: datetime) -> datetime:
+        """The start of the shift that is on at a plant time."""
+        local = when.astimezone(self.tz)
+        best = None
+        for day in (-1, 0):
+            date = (local + timedelta(days=day)).date()
+            for shift in self.model.shifts:
+                start = datetime.combine(date, shift.start, tzinfo=self.tz)
+                if start <= local and (best is None or start > best):
+                    best = start
+        return best
+
+    def verified(self, session: Session, station_id: int, when: datetime) -> bool:
+        """Has the tester passed its master sample check in this shift?"""
+        start = self.shift_start(when)
+        return session.scalar(select(func.count()).select_from(db.StationVerification).where(
+            db.StationVerification.station_id == station_id, db.StationVerification.result == "PASS",
+            db.StationVerification.shift_start == start)) > 0
+
+    def verification(self, session: Session, req) -> dict:
+        """The plant reports the master sample check of a tester."""
+        self.apply_records(session, req.run_id, req.records)
+        station_id, _ = self.station(session, req.station)
+        session.add(db.StationVerification(run_id=req.run_id, station_id=station_id, at=req.plant_time,
+                                           started_at=req.start, shift_start=self.shift_start(req.plant_time),
+                                           result=req.result, person=req.person))
+        session.commit()
+        return {"ok": True}
+
+    def skill_for(self, station_type: str) -> str | None:
+        """The qualification a person needs to work a station type (from the seats of config/crew.yaml)."""
+        if self._skills is None:
+            out: dict[str, str] = {}
+            for area, rules in self.model.crew.seats.items():
+                types = {st.type for line in self.model.lines.values() if line.area_kind.value == area for st in line.stations}
+                named = {t for r in rules for t in r.attends if t != "*"}
+                for rule in rules:
+                    skill = rule.skill or area
+                    for t in (types - named) if "*" in rule.attends else rule.attends:
+                        out.setdefault(t, skill)
+            self._skills = out
+        return self._skills.get(station_type)
+
+    def qualified(self, session: Session, operator: int | None, station_type: str, when: datetime) -> None:
+        """Raise Refusal if the person logged in at the station has no valid qualification for it. Nobody
+        logged in (a machine running on its own) is no reason to stop it."""
+        skill = self.skill_for(station_type)
+        if operator is None or skill is None:
+            return
+        q = session.get(db.Qualification, (operator, skill))
+        if q is None:
+            if session.get(db.Employee, operator) is None:
+                return                                   # the plant did not report its people (yet)
+            raise Refusal("NOT_QUALIFIED", f"person {operator} is not qualified for {skill}", None)
+        if q.valid_until is not None and q.valid_until < when:
+            if q.revoked:
+                raise Refusal("NOT_QUALIFIED", f"the {skill} qualification of person {operator} was taken away: {q.note or ''}"[:200], None)
+            raise Refusal("NOT_QUALIFIED", f"the {skill} certificate of person {operator} ran out", None)
+
+    def roster(self, session: Session, req) -> dict:
+        """The plant reports its people and their qualifications (at the start of a run)."""
+        ids = [p.id for p in req.people]
+        session.execute(db.Qualification.__table__.delete().where(db.Qualification.employee_id.in_(ids)))
+        now = datetime.now(self.tz)
+        for p in req.people:
+            row = session.get(db.Employee, p.id)
+            if row is None:
+                row = db.Employee(id=p.id)
+                session.add(row)
+            row.name, row.role, row.shift, row.sex, row.home, row.updated_at = p.name, p.role, p.shift, p.sex, p.home, now
+        session.flush()
+        for p in req.people:
+            for skill, until in p.skills.items():
+                session.add(db.Qualification(employee_id=p.id, skill=skill, valid_until=until))
+        session.flush()
+        out: dict = {"ok": True, "people": len(ids)}
+        if self.qualifications is not None:                 # what people decided on the web wins
+            self.qualifications.reapply(session)
+            out["skills"] = self.qualifications.decisions(session)
+        session.commit()
+        return out
+
+    def station_ready(self, session: Session, stype, station_id: int, when: datetime) -> None:
+        """Raise Refusal if the station itself may not work yet (a tester without its master sample check
+        of this shift). The unit is not to blame: it waits, it does not go to quarantine."""
+        if stype.verification is not None and not self.verified(session, station_id, when):
+            raise Refusal("VERIFICATION_DUE", "the tester has no passed master sample check in this shift", None)
+        if stype.code == "PASTE_PRINTER" and self.material is not None:
+            self.material.paste_ok(session, station_id, when)       # the paste open too long on the stencil
 
     def _gate(self, session: Session, unit: db.Unit, step: str, stype,
               job: tuple[str, str, int] | None) -> None:
@@ -419,6 +518,9 @@ class Trace:
         if full:
             box.status = "CLOSED"
             box.location = "Waiting for palletizing" if klt else "Warehouse"
+            if not klt and self.labels is not None:
+                session.flush()
+                self.labels.print(session, box, when, self.station_info[station_id][0])   # the pallet label
         return {"ok": True, "container": box.serial, "full": full}
 
     # ------------------------------------------------------------------ repair
@@ -546,6 +648,9 @@ class Trace:
             extra["work_order_id"] = order.id
             ids = list(session.scalars(select(db.Unit.id).where(db.Unit.work_order_id == order.id)))
             return ids, extra
+        if body.kind == "MATERIAL_LOT":                # everything that got parts or paste of a supplier lot (and
+            ids = self.material.lot_units(session, body.target.strip()) if self.material is not None else []
+            return ids, extra                          # goods-in refuses its reels: a lot may be held before it comes)
         station_id, _ = self.station(session, body.target.strip())
         start = body.window_from or now - timedelta(hours=1)
         end = body.window_to or now
@@ -573,6 +678,8 @@ class Trace:
                        status="ACTIVE", affected=len(ids), created_at=now, created_by=user, **extra)
         session.add(hold)
         session.flush()
+        if hold.kind == "MATERIAL_LOT":           # the reels of the lot come off the machines and out of the store
+            session.add(db.SimCommand(serial=hold.target, action="HOLD_LOT", created_at=now))
         if ids:
             session.execute(insert(db.HoldUnit), [{"hold_id": hold.id, "unit_id": i} for i in ids])
         session.commit()
@@ -590,6 +697,9 @@ class Trace:
         hold.status, hold.disposition = "RELEASED", disposition
         hold.released_at, hold.released_by = now, user
         session.flush()
+        if hold.kind == "MATERIAL_LOT" and session.scalar(select(func.count()).select_from(db.Hold).where(
+                db.Hold.kind == "MATERIAL_LOT", db.Hold.target == hold.target, db.Hold.status == "ACTIVE")) == 0:
+            session.add(db.SimCommand(serial=hold.target, action="RELEASE_LOT", created_at=now))
         candidates = select(db.Unit).where(db.Unit.status == "QUARANTINE",
                                            db.Unit.quarantine_reason.like("HOLD%"))
         in_hold = candidates.join(db.HoldUnit, db.HoldUnit.unit_id == db.Unit.id) \
@@ -605,6 +715,36 @@ class Trace:
         session.commit()
         self.holds_changed()
         return {"hold": hold.id, "disposed": done}
+
+    # ------------------------------------------------------------------ the truck
+    def ship_check(self, session: Session, req) -> dict:
+        """The pallet label is scanned at the truck. A pallet on hold does not leave: it and everything on it
+        go into quarantine (the hold's disposition decides later); a scrapped one is broken up."""
+        self.apply_records(session, req.run_id, req.records)
+        pallet = self.unit(session, req.serial)
+        if pallet is None:
+            session.commit()
+            return {"ok": True}
+        if pallet.status == "SCRAPPED":
+            session.commit()
+            return {"ok": False, "reason": "SCRAPPED", "message": f"{pallet.serial} was scrapped"}
+        hold = self.active_hold(session, pallet)
+        if hold is None:
+            session.commit()
+            return {"ok": True}
+        sql = text("""
+            WITH RECURSIVE contents(id) AS (
+                SELECT CAST(:pallet AS bigint)
+                UNION
+                SELECT l.source_id FROM unit_link l JOIN contents c ON l.target_id = c.id WHERE l.kind IN ('PACK', 'PALLET')
+            ) SELECT id FROM contents""")
+        ids = [r[0] for r in session.execute(sql, {"pallet": pallet.id})]
+        for unit in session.scalars(select(db.Unit).where(db.Unit.id.in_(ids))):
+            if unit.status not in ("QUARANTINE", "SCRAPPED", "SHIPPED"):
+                self._to_quarantine(unit, unit.station_id, "dock", f"HOLD #{hold.id}: stopped at the truck",
+                                    req.plant_time)
+        session.commit()
+        return {"ok": False, "reason": "HOLD", "message": f"{pallet.serial} is on hold #{hold.id}: {hold.reason}"[:200]}
 
     def dispose(self, session: Session, unit: db.Unit, action: str, now: datetime) -> None:
         """Decision about a unit in quarantine: back to production, or scrap."""
@@ -627,4 +767,4 @@ class Trace:
                             .values(acked_at=now))
         rows = session.scalars(select(db.SimCommand).where(db.SimCommand.acked_at.is_(None))
                                .order_by(db.SimCommand.id).limit(200))
-        return [{"id": c.id, "serial": c.serial, "action": c.action} for c in rows]
+        return [{"id": c.id, "serial": c.serial, "action": c.action, **({"data": c.data} if c.data else {})} for c in rows]

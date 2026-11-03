@@ -187,7 +187,8 @@ class FloorView {
     if (!L) return null;
     const k = this.cam.k;
     // people first, then the pieces (when the plan is close enough to point at one), then machines
-    const reach = 6 / k;
+    // the whole drawn figure counts (it keeps a visible size far out), but at least 6 px of the screen
+    const reach = Math.max(6 / k, 7 * Math.max(1, 0.95 / k));
     let best = null, bestD = reach;
     for (const p of Floor.S.people.values()) {
       if (FloorPeople.hidden(p)) continue;                          // in a toilet cabin
@@ -226,6 +227,11 @@ class FloorView {
     for (const [code, st] of Object.entries(L.stations)) {
       if (x >= st.x && x <= st.x + st.w && y >= st.y && y <= st.y + st.h) return { line: st.line, station: code };
     }
+    if (k >= 1.3) {                                                   // the red NOK tote at the exit of a cell
+      for (const [code, n] of Object.entries(L.nok || {})) {
+        if (x >= n.x - 0.5 && x <= n.x + n.w + 0.5 && y >= n.y - 0.5 && y <= n.y + n.h + 0.5) return { line: n.line, nok: code };
+      }
+    }
     for (const [code, info] of Object.entries(L.lines)) {
       if (info.kind === "REPAIR") continue;
       if (x >= info.x1 - 60 && x <= info.x2 + 4 && y >= info.y1 - 12 && y <= info.y2 + 8) return { line: code };
@@ -236,6 +242,7 @@ class FloorView {
     }
     if (k >= 0.7) {                                                   // a thing in a room: what it is
       const thing = FloorPeople.thingAt(x, y);
+      if (typeof thing === "string") return { thing };                    // SMT material beside the team desks
       if (thing !== null) return { building: "STAFF", thing };
     }
     for (const b of L.buildings) {
@@ -276,15 +283,23 @@ class FloorView {
         }
       } else this.following = null;
     }
+    if (!this.focusLine && !this.focusStation) this.clampCam();
     const ctx = this.ctx, A = FloorArt, P = A.P, k = this.cam.k;
     const t = now / 1000;
     const lang = typeof MES !== "undefined" ? MES.lang() : "en";
     const floor = Floor.floor;
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.fillStyle = P.floor;
+    const hall = L.hall && L.hall.pts && L.hall.pts.length > 2 ? L.hall : null;
+    ctx.fillStyle = hall ? P.outside : P.floor;          // outside the walls: the yard and the street
     ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
     ctx.setTransform(k * dpr, 0, 0, k * dpr, (w / 2 - this.cam.x * k) * dpr, (h / 2 - this.cam.y * k) * dpr);
+    if (hall) {
+      ctx.beginPath();
+      hall.pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+      ctx.closePath();
+      ctx.fillStyle = P.floor; ctx.fill();
+    }
     ctx.save();
     if (this.focusLine) {          // a line page shows only its own line
       const band = this.lineBand(this.focusLine);
@@ -293,7 +308,15 @@ class FloorView {
     const view = { x0: this.cam.x - w / 2 / k - 20, y0: this.cam.y - h / 2 / k - 20, x1: this.cam.x + w / 2 / k + 20, y1: this.cam.y + h / 2 / k + 20 };
     const seen = (r) => r.x + (r.w || 0) >= view.x0 && r.x <= view.x1 && r.y + (r.h || 0) >= view.y0 && r.y <= view.y1;
 
-    this.drawGrid(ctx, view, k);
+    if (hall) {                                          // the grid of the floor only inside the hall
+      ctx.save();
+      ctx.beginPath();
+      hall.pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+      ctx.closePath(); ctx.clip();
+      this.drawGrid(ctx, view, k);
+      ctx.restore();
+      this.drawHallWall(ctx, hall, k);
+    } else this.drawGrid(ctx, view, k);
     if (!this.opts.closeup) for (const z of L.zones) this.drawZone(ctx, z, k, lang);
 
     const running = {};
@@ -335,10 +358,13 @@ class FloorView {
       stationInfo[code] = Floor.stationInfo(code);
       visibleStations.push(code);
     }
-    const extraOf = (st) => ({ panels: floor && floor.panels ? floor.panels[st.line] : null });
+    const extraOf = (st) => ({ panels: floor && floor.panels ? floor.panels[st.line] : null,
+                               back: floor && floor.side ? floor.side[st.line] || 0 : 0 });
     for (const code of visibleStations) FloorMachines.draw(ctx, L.stations[code], stationInfo[code], k, t, "base", extraOf(L.stations[code]), lang);
 
     FloorPeople.drawDesks(ctx, L, floor, k, t);
+    FloorPeople.drawStore(ctx, L, floor, k, lang);
+    FloorPeople.drawReceiving(ctx, L, floor, k, lang, { seen });
     FloorRobots.drawNok(ctx, L, floor, k);
     FloorRobots.drawRacks(ctx, L, floor, k);
 
@@ -350,6 +376,9 @@ class FloorView {
     }
 
     for (const code of visibleStations) FloorMachines.draw(ctx, L.stations[code], stationInfo[code], k, t, "top", extraOf(L.stations[code]), lang);
+    if (typeof FloorBoards !== "undefined") {
+      for (const code of visibleStations) if (stationInfo[code] && stationInfo[code].gs) FloorBoards.golden(ctx, L.stations[code], k, t);
+    }
 
     for (const r of Floor.S.robots.values()) {
       if (r.x < view.x0 - 30 || r.x > view.x1 + 30 || r.y < view.y0 - 30 || r.y > view.y1 + 30) continue;
@@ -373,6 +402,46 @@ class FloorView {
       ctx.fillStyle = P.textDim; ctx.font = "14px sans-serif"; ctx.textAlign = "center";
       ctx.fillText(lang === "sk" ? "Čakám na údaje zo závodu…" : "Waiting for the plant…", this.canvas.width / 2, this.canvas.height / 2);
     }
+  }
+
+  /* The outer wall of the hall, open where a truck gate is (the dock, the supplier bay). */
+  drawHallWall(ctx, hall, k) {
+    const P = FloorArt.P, lw = Math.max(3, 1.6 / k);
+    const pts = hall.pts, n = pts.length;
+    ctx.strokeStyle = P.wall; ctx.lineWidth = lw; ctx.lineCap = "square";
+    ctx.beginPath();
+    for (let i = 0; i < n; i++) {
+      const [ax, ay] = pts[i], [bx, by] = pts[(i + 1) % n];
+      // the gates on this wall (only horizontal walls have gates)
+      const gaps = ay === by ? hall.gates.filter((g) => g.y === ay && g.x > Math.min(ax, bx) && g.x < Math.max(ax, bx))
+        .map((g) => [g.x - g.w / 2, g.x + g.w / 2]).sort((p, q) => (bx > ax ? p[0] - q[0] : q[0] - p[0])) : [];
+      ctx.moveTo(ax, ay);
+      for (const [g0, g1] of gaps) {
+        const [near, far] = bx > ax ? [g0, g1] : [g1, g0];
+        ctx.lineTo(near, ay); ctx.moveTo(far, ay);
+      }
+      ctx.lineTo(bx, by);
+    }
+    ctx.stroke();
+    ctx.lineCap = "butt";
+    if (k > 0.8) {                                       // the posts of the gates
+      for (const g of hall.gates) {
+        FloorArt.rect(ctx, g.x - g.w / 2 - 1.5, g.y - 2, 3, 4, "#d2a630");
+        FloorArt.rect(ctx, g.x + g.w / 2 - 1.5, g.y - 2, 3, 4, "#d2a630");
+      }
+    }
+  }
+
+  /* The camera stays over the plant: the middle of the screen never leaves the hall, and a plan smaller
+     than the screen stays in the middle of it. */
+  clampCam() {
+    const L = Floor.layout;
+    if (!L || !L.world) return;
+    const { w, h } = this.size, k = this.cam.k;
+    const hw = w / 2 / k, hh = h / 2 / k, m = 40;
+    const W = L.world.w, H = L.world.h;
+    this.cam.x = W + 2 * m <= 2 * hw ? W / 2 : Math.min(W + m - hw, Math.max(hw - m, this.cam.x));
+    this.cam.y = H + 2 * m <= 2 * hh ? H / 2 : Math.min(H + m - hh, Math.max(hh - m, this.cam.y));
   }
 
   drawGrid(ctx, view, k) {

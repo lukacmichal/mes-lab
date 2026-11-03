@@ -18,6 +18,7 @@ from zoneinfo import ZoneInfo
 
 from .core import Item
 from .crew import LOGISTICS
+from .trace import MesUnavailable
 
 if TYPE_CHECKING:
     from mes_lab.model.schema import TruckSchedule
@@ -56,6 +57,7 @@ class Shipping:
         self.trucks: dict[int, Truck] = {}
         self.recent: deque[dict] = deque(maxlen=10)
         self.counter = 0
+        self.held = 0                                   # pallets the MES kept back at the truck (on hold)
         self.shipped: dict[str, dict[str, int]] = {m.code: {"pallets": 0, "klt": 0, "units": 0}
                                                    for m in self.model.finished_goods()}
         for schedule in self.model.shipping.trucks:
@@ -82,21 +84,34 @@ class Shipping:
     def available(self, customer: str) -> int:
         return sum(len(self.plant.stock[m]) for m in self._materials(customer))
 
-    def _take(self, customer: str) -> Item | None:
-        """The oldest pallet of the customer's products leaves the warehouse."""
-        oldest = None
-        for material in self._materials(customer):
-            queue = self.plant.stock[material]
-            if queue and (oldest is None or queue[0].id < self.plant.stock[oldest][0].id):
-                oldest = material
-        if oldest is None:
-            return None
-        pallet = self.plant.stock[oldest].popleft()
-        counts = self.plant.warehouse[oldest]
+    def _take(self, customer: str, refused: set[int]) -> Item | None:
+        """The oldest pallet of the customer's products leaves the warehouse. Its label is scanned at the truck
+        first: a pallet the MES holds stays (and is asked about again at the next truck), a scrapped one goes."""
+        while True:
+            candidates = [p for m in self._materials(customer) for p in self.plant.stock[m] if p.id not in refused]
+            if not candidates:
+                return None
+            pallet = min(candidates, key=lambda p: p.id)
+            try:
+                verdict = self.plant.trace.ship_check(pallet) if pallet.serial else None
+            except MesUnavailable:
+                return None                                   # no MES, no shipping: the truck waits
+            if verdict is None or verdict.ok:
+                break
+            refused.add(pallet.id)
+            self.held += 1
+            if verdict.reason == "SCRAPPED":                  # its units were scrapped: the pallet is broken up
+                self._remove(pallet)
+                self.plant.scrapped[pallet.material] += sum(len(k.children) for k in pallet.children)
+        self._remove(pallet)
+        return pallet
+
+    def _remove(self, pallet: Item) -> None:
+        self.plant.stock[pallet.material].remove(pallet)
+        counts = self.plant.warehouse[pallet.material]
         counts["pallets"] -= 1
         counts["klt"] -= len(pallet.children)
         counts["units"] -= sum(len(k.children) for k in pallet.children)
-        return pallet
 
     # ------------------------------------------------------------------ trucks
     def _plate(self, customer: str) -> str:
@@ -136,8 +151,9 @@ class Shipping:
         worker.act = "walk"
         yield from crew.walk(worker, f"dock:{bay}")
         worker.act, worker.target = "fix", f"dock:{bay}"
+        refused: set[int] = set()
         while len(truck.pallets) < truck.capacity:
-            pallet = self._take(schedule.customer)
+            pallet = self._take(schedule.customer, refused)
             if pallet is None:
                 break
             ride = self.plant.logistics.send(f"ship:{bay}", pallet)
@@ -145,7 +161,8 @@ class Shipping:
             truck.pallets.append(pallet)
         worker.target = None
         self._leave_dock(worker)
-        self._document(truck)
+        if truck.pallets:                               # all its pallets on hold: it leaves empty, no delivery note
+            self._document(truck)
         yield from self._drive(truck, "out", f"truck_out:{bay}")
         del self.trucks[truck.id]
 

@@ -36,8 +36,13 @@ downtime_reasons:
   SIDE_CHANGE:          {name: Changeover to the other board side, category: CHANGEOVER}
   MICROSTOP:            {name: Minor stop, category: MINOR_STOP}
   PLANNED_MAINTENANCE:  {name: Planned maintenance, category: PLANNED, needs: meter}
+  MASTER_SAMPLE:        {name: Master sample check of the tester, category: PLANNED}
+  SPC_ADJUST:           {name: Process adjustment after an SPC alarm, category: PLANNED, needs: meter}
   NO_ORDER:             {name: No order scheduled, category: NOT_SCHEDULED}
   NO_MATERIAL:          {name: Waiting for material, category: MATERIAL}
+  REEL_EMPTY:           {name: Component reel ran out before the splice, category: MATERIAL}
+  PASTE_CHANGE:         {name: Solder paste jar changed, category: MATERIAL}
+  NO_OPERATOR:          {name: No qualified operator at the machine, category: PEOPLE}
   MES_UNAVAILABLE:      {name: MES not answering (interlock), category: IT}
   # Breakdowns
   CONVEYOR_JAM:         {name: Conveyor jam, category: BREAKDOWN}

@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-__version__ = "0.8.0"
+__version__ = "0.21.1"
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG_DIR = PROJECT_ROOT / "config"

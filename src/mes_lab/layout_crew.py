@@ -36,6 +36,7 @@ from dataclasses import dataclass, field
 from mes_lab.model.schema import AreaKind, PlantModel
 
 SPOT = 8          # distance of a standing person from the machine
+SPOT_TOP = 6      # ... at the top lane of a double cell, where the robot lane of the aisle runs close by
 CORR_OFF = 64     # the walkway of an aisle runs this far below the spine of the row above it ...
 KEEP = 6          # ... with its two lanes this far either side of its middle (people keep to the right)
 AMR_OFF = 88      # the robot lane of an aisle: beyond the walkway, clear of the people at both rows
@@ -50,6 +51,8 @@ GAP_DOCK_DY_DEFAULT = 23.0    # (SMT lines have their return belt under the mach
 CHARGERS_PITCH = 36
 HANDOVER_DX = 14              # the next person waits this far beside a seat until it is handed over
 PERSON_GAP = 9.5              # inside a room a walk keeps this far from the middle of somebody standing
+STORE_Y0, STORE_H = 36, 22    # SMT reel racks, the paste fridge and thaw cabinet: this far north of the spine
+RECV_DY = 87                  # the walkway of goods receipt: this far below the robot lane of the bottom
 
 STAFF_H = 150
 BAY_PITCH = 40
@@ -747,10 +750,11 @@ def build(layout, ctx: dict) -> None:
         walk.place(f"scrap:{k}", scr["x"] + 12 + 22 * k, scr["y"] - 6, "bottom", room="rpr",
                    look=(scr["x"] + 12 + 22 * k, scr["y"] + scr["h"] / 2))
 
-    # --- the board with the head count of the shifts, in the quiet corner right of the last final
-    # assembly line (above the bottom walkway, clear of the robot lanes)
-    bx0 = max(sx0 + 270, row_end(fa, rows - 1) + 40 + AMR_L)
-    layout.board = {"x": bx0, "y": y_b - 74, "w": 420, "h": 54}
+    # --- the board with the head count of the shifts: a wide screen in the empty strip above the halls, in
+    # the middle of the plant (no belt, walkway or robot lane runs there, so it hides nothing that moves)
+    y_halls = min((z["y"] for z in layout.zones), default=44)
+    bw, bh = 780, y_halls - 10
+    layout.board = {"x": round((layout.world["w"] - bw) / 2), "y": (y_halls - bh) / 2, "w": bw, "h": bh}
 
     # --- team desks (for the seats whose home is the desk of their line): the operator sits south of
     # the desk and looks north, at the screen with the state of the line. Beside the desk the place
@@ -783,6 +787,22 @@ def build(layout, ctx: dict) -> None:
         for ord_, dx in zip(range(n_shifts), (1, DESK_W - 1, DESK_W + 17)):
             walk.place(f"reserve:{line.code}:{ord_}", x0 + dx, spine[row] + RESERVE_DY, corr, look=kit["look"])
 
+    # --- SMT material: a rack of component reels at every SMT line, north of its panel belt beside the team
+    # desk (the operators fetch the next reel there), and at the first line the fridge of the solder paste and
+    # the cabinet the jars thaw in. Their places are reached from the walkway above, like the top lanes of a cell
+    layout.smt_store = {"racks": [], "fridge": None, "thaw": None}
+    x_store = zones["SMT"]["desk"] - 16
+    for line in smt:
+        row = layout.lines[line.code]["row"]
+        y0 = spine[row] - STORE_Y0
+        layout.smt_store["racks"].append({"line": line.code, "x": x_store, "y": y0, "w": 30, "h": STORE_H})
+        walk.place(f"reels:{line.code}", x_store + 15, y0 - 8, f"SMT:{row - 1}", look=(x_store + 15, y0 + STORE_H / 2))
+    if smt:
+        y0 = spine[0] - STORE_Y0
+        layout.smt_store["fridge"] = {"x": x_store + 36, "y": y0 - 2, "w": 18, "h": STORE_H + 2}
+        layout.smt_store["thaw"] = {"x": x_store + 58, "y": y0, "w": 26, "h": STORE_H}
+        walk.place("paste", x_store + 56, y0 - 8, "SMT:-1", look=(x_store + 56, y0 + STORE_H / 2))
+
     # --- a standing place at every machine, and beside it the place for the next person
     for code, st in layout.stations.items():
         info = layout.lines[st["line"]]
@@ -798,7 +818,7 @@ def build(layout, ctx: dict) -> None:
             walk.place(f"hand:spot:{code}", st["cx"] + HANDOVER_DX + 2, y, "bottom", room="rpr", look=centre)
             walk.place(f"tech:{code}", st["cx"] - HANDOVER_DX - 2, y, "bottom", room="rpr", look=centre)
         else:
-            y = st["y"] - SPOT if top_lane else st["y"] + st["h"] + SPOT
+            y = st["y"] - SPOT_TOP if top_lane else st["y"] + st["h"] + SPOT
             corr = f"{kind}:{row - 1}" if top_lane else f"{kind}:{row}"
             walk.place(f"spot:{code}", st["cx"], y, corr, look=centre)
             walk.place(f"hand:spot:{code}", st["cx"] + HANDOVER_DX, y, corr, look=centre)
@@ -855,6 +875,7 @@ def build(layout, ctx: dict) -> None:
                 if not attends:
                     continue
                 layout.seats[key] = {"line": line.code, "code": rule.code, "area": line.area_kind.value,
+                                     "skill": rule.skill or line.area_kind.value,
                                      "home": home_place, "handover": layout.handover[home_place],
                                      "home_station": home_station if rule.home != "desk" else None,
                                      "fixed": rule.fixed, "attends": attends}
@@ -878,7 +899,29 @@ def build(layout, ctx: dict) -> None:
         layout._add(f"truck_in:{bay}", "truck", [(bx, park_y + YARD_LEN), (bx, park_y)], model.shipping.yard_speed)
         layout._add(f"truck_out:{bay}", "truck", [(bx, park_y), (bx, park_y + YARD_LEN)], model.shipping.yard_speed)
         layout._add(f"ship:{bay}", "ship", [(bx, fgw["y"] + fgw["h"] - 22), (bx, park_y + 14)], 6.0)
-    layout.world["h"] = max(layout.world["h"], int(park_y + TRAILER_L + CAB_L + 52), int(staff_y + STAFF_H + 30))
+    # --- goods receipt, south of the goods-in warehouse (beyond the robot lane): the bay of the supplier
+    # trucks, the receiving desk, the reel store with its dry cabinets; a walkway hangs on the SMT trunk
+    y_recv = y_rb + RECV_DY
+    walk.trunk("RECV", zones["SMT"]["walk"], y_b, y_recv)
+    walk.corridor("recv", y_recv, gi["x"] + 10, zones["SMT"]["walk"], "RECV")
+    rear = y_rb + 31
+    bay_x = gi["x"] + 26
+    layout.receiving = {
+        "bay": {"x": bay_x, "rear_y": rear, "trailer_w": TRAILER_W, "trailer_l": TRAILER_L, "cab_l": CAB_L},
+        "table": {"x": bay_x + 36, "y": rear + 8, "w": 56, "h": 16},
+        "store": {"x": bay_x + 106, "y": rear + 4, "w": 88, "h": 24, "dry": 2},
+        "label": [gi["x"], y_recv + 18],
+    }
+    t, st = layout.receiving["table"], layout.receiving["store"]
+    walk.place("recv:truck", bay_x + TRAILER_W / 2 + 8, rear + 8, "recv", look=(bay_x, rear))
+    handlers = sum(s.material for s in model.crew.shifts.values())
+    for k in range(max(1, handlers)):                      # a place at the desk for every handler of the shifts
+        walk.place(f"recv:{k}", t["x"] + 14 + 14 * k, t["y"] + t["h"] + 8, "recv", look=(t["x"] + 14 + 14 * k, t["y"]))
+    walk.place("recv:store", st["x"] + st["w"] / 2, st["y"] + st["h"] + 8, "recv", look=(st["x"] + st["w"] / 2, st["y"]))
+    layout._add("recv_in", "truck", [(bay_x, rear + YARD_LEN), (bay_x, rear)], model.shipping.yard_speed)
+    layout._add("recv_out", "truck", [(bay_x, rear), (bay_x, rear + YARD_LEN)], model.shipping.yard_speed)
+    layout.world["h"] = max(layout.world["h"], int(park_y + TRAILER_L + CAB_L + 52), int(staff_y + STAFF_H + 30),
+                            int(rear + TRAILER_L + CAB_L + 20))
     layout.walkways = [[[c["x0"], c["y"]], [c["x1"], c["y"]]] for c in walk.corridors.values()] + \
                       [[[t["x"], t["y0"]], [t["x"], t["y1"]]] for t in walk.trunks.values()]
 

@@ -15,15 +15,30 @@ class MesClient:
 
     def register_run(self, run_id: str, seed: int, speed: float | None,
                      initial_stock: dict[str, list[str]] | None = None,
-                     lines: list[str] | None = None, knobs: dict | None = None) -> dict:
-        r = self.http.post("/api/v1/sim/runs", json={"run_id": run_id, "seed": seed, "speed": speed,
-                                                     "initial_stock": initial_stock or {},
-                                                     "lines": lines, "knobs": knobs})
+                     lines: list[str] | None = None, knobs: dict | None = None,
+                     plant_start: str | None = None, settings_rev: int | None = None) -> dict:
+        body = {"run_id": run_id, "seed": seed, "speed": speed, "initial_stock": initial_stock or {},
+                "lines": lines, "knobs": knobs, "settings_rev": settings_rev}
+        if plant_start is not None:
+            body["plant_start"] = plant_start
+        # a run back at the start of the real day makes the MES delete what lay after it: that can take minutes
+        r = self.http.post("/api/v1/sim/runs", json=body, timeout=600.0 if plant_start else self.http.timeout)
+        r.raise_for_status()
+        return r.json()
+
+    def register_people(self, run_id: str, people: list[dict]) -> dict:
+        r = self.http.post("/api/v1/sim/people", json={"run_id": run_id, "people": people})
+        r.raise_for_status()
+        return r.json()
+
+    def register_reels(self, run_id: str, reels: list[dict]) -> dict:
+        r = self.http.post("/api/v1/sim/reels", json={"run_id": run_id, "reels": reels})
         r.raise_for_status()
         return r.json()
 
     def scenario(self) -> dict:
-        """The plant the MES asks for: {"knobs": ... or None, "version": n}."""
+        """The plant the MES asks for: {"knobs": ... or None, "version": n, "settings": {"revision": n,
+        "overrides": {...}}} (the changes of the settings page over the config files)."""
         try:
             r = self.http.get("/api/v1/sim/scenario")
             r.raise_for_status()

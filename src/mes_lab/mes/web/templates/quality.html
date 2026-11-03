@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_help.html" import bi, help %}
+{% from "_help.html" import bi, bi_inline, help %}
 {% block title %}Quality{% endblock %}
 {% block content %}
 <div class="page-head">
@@ -17,6 +17,8 @@
           "<b>Karanténa</b> drží kusy, ktoré MES odmietol pri check-ine: blokované, preskočený krok, neopravené. Čakajú tu, kým rozhodneš: <i>Release</i> ich vráti do výroby, <i>Scrap</i> ich vyhodí. Závod rozhodnutie vykoná do pár sekúnd.") }}
     {{ bi("<b>Defects found · last 24 h</b> is a Pareto chart: the most frequent problem first. That is where improvement work starts.",
           "<b>Defects found · last 24 h</b> je Paretov graf: najčastejší problém je prvý. Tam sa začína zlepšovanie.") }}
+    {{ bi("<b>Testers · master sample:</b> before an in-circuit or end-of-line tester may test production, the operator checks it at the start of every shift with its master sample (a known good unit, gold on the plan). The MES refuses units at the tester until a passed check of this shift is on record; a failed check calls maintenance (fixture, probes) and is done again. The process values themselves are watched on the <a href='/spc'>SPC</a> page.",
+          "<b>Testery · vzorový kus:</b> skôr než smie in-circuit alebo záverečný tester testovať výrobu, operátor ho na začiatku každej zmeny overí vzorovým kusom (známy dobrý kus, na pláne zlatý). MES pri testeri odmieta kusy, kým nie je zapísané úspešné overenie tejto zmeny; neúspešné overenie privolá údržbu (prípravok, hroty) a robí sa znova. Samotné hodnoty procesu sa sledujú na stránke <a href='/spc'>SPC</a>.") }}
   </div>
 {% endcall %}
 
@@ -28,7 +30,8 @@
   </div>
   <div class="stack">
     <div class="panel"><h3>Defects found · last 24 h</h3><div id="pareto" class="bars"></div></div>
-    <div class="panel"><h3>Recent repairs</h3><div id="repairs"></div></div>
+    <div class="panel"><h3>Recent repairs</h3><div id="repairs" class="table-wrap"></div></div>
+    <div class="panel"><h3>{{ bi_inline("Testers · master sample check", "Testery · overenie vzorovým kusom") }}</h3><div id="verifications" class="table-wrap"></div></div>
   </div>
 </div>
 {% endblock %}

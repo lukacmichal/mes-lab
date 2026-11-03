@@ -8,7 +8,8 @@ from datetime import UTC, datetime
 import pytest
 
 from mes_lab.layout import build_layout
-from mes_lab.sim.core import PlantClock
+from mes_lab.model.schema import AbsenceRules
+from mes_lab.sim.core import PlantClock, State
 from mes_lab.sim.dispatch import LocalDispatcher
 from mes_lab.sim.plant import PlantSim
 
@@ -17,6 +18,19 @@ SETTLE_S = 900           # around a shift change the seats are in motion
 
 def _plant(model, seed=4):
     return PlantSim(model, PlantClock(datetime(2026, 1, 5, 6, 0, tzinfo=UTC)), LocalDispatcher(model, seed), seed=seed)
+
+
+def _why_empty(crew, key):
+    """Why a seat is empty: nobody qualified could take it this shift, its person is on the toilet, or on
+    a break that no relief person covers."""
+    if key in crew.uncovered:
+        return "out"
+    person = crew.holder.get(key)
+    if person is not None and person.task == "wc":
+        return "wc"
+    if person is not None and person.on_break:
+        return "break"
+    return None
 
 
 def _calm(plant, t):
@@ -29,6 +43,7 @@ def _calm(plant, t):
 def day(model):
     """One plant run of 31 hours, looked at every quarter of an hour."""
     plant = _plant(model)
+    plant.crew.attendance_sent = lambda rows: None     # keep the rows for the test (offline nobody takes them)
     samples = []
     peak_break: dict[int, float] = {}
     for minute in range(15, 31 * 60, 15):
@@ -40,8 +55,9 @@ def day(model):
             "t": minute * 60.0,
             "snap": plant.floor_snapshot(),
             "occupants": {k: (s.occupant.id if s.occupant else None) for k, s in crew.seats.items()},
-            "empty_at_wc": {k: crew.roster[crew.current_shift]["primaries"][k].task == "wc"
-                            for k, s in crew.seats.items() if s.occupant is None},
+            "empty": {k: _why_empty(crew, k) for k, s in crew.seats.items() if s.occupant is None},
+            "unqualified": [k for k, s in crew.seats.items()
+                            if s.occupant is not None and not crew.qualified(s.occupant, s.skill, minute * 60.0)],
             "calm": _calm(plant, minute * 60.0),
             "shift": crew.shift_window(minute * 60.0),
         })
@@ -85,6 +101,20 @@ def test_the_staff_rooms_the_board_and_the_bays_do_not_overlap_anything(model):
     for bay in layout.data["bays"]:
         assert fgw["x"] <= bay["x"] - bay["trailer_w"] / 2 and bay["x"] + bay["trailer_w"] / 2 <= fgw["x"] + fgw["w"]
         assert bay["rear_y"] + bay["trailer_l"] + bay["cab_l"] <= layout.world["h"]
+
+
+def test_the_head_count_board_hides_nothing_that_moves(model):
+    """The board hangs over the empty strip above the halls: no conveyor, walkway or robot lane runs
+    under it (it used to stand on the exit belt of the last final assembly line)."""
+    data = build_layout(model).data
+    board = tuple(data["board"][k] for k in ("x", "y", "w", "h"))
+    for key, route in data["routes"].items():
+        for p, q in zip(route["pts"], route["pts"][1:]):
+            assert not _hits(p, q, board), f"the board hides the conveyor {key}"
+    for p, q in data["walkways"] + data["amr_lanes"]:
+        assert not _hits(p, q, board), f"the board hides the path {p} -> {q}"
+    for z in data["zones"]:
+        assert board[1] + board[3] <= z["y"], f"the board reaches into the hall {z['id']}"
 
 
 # the street side of the entrance: from there into the plant only through an ESD gate (and out through the turnstile)
@@ -396,11 +426,12 @@ def test_every_seat_is_staffed_by_one_person_between_shift_changes(day):
     assert len(calm) > 60
     for s in calm:
         occupants = s["occupants"]
-        # a seat is empty only while its person is on the toilet
-        assert all(v is not None or s["empty_at_wc"][k] for k, v in occupants.items()), (s["t"], [k for k, v in occupants.items() if v is None])
+        # a seat is empty only while its person is on the toilet or on a break without a relief, or when
+        # nobody qualified came to the shift for it
+        assert all(why is not None for why in s["empty"].values()), (s["t"], s["empty"])
         taken = [v for v in occupants.values() if v is not None]
         assert len(set(taken)) == len(taken), s["t"]
-        assert sum(1 for v in occupants.values() if v is None) <= 4
+        assert sum(1 for why in s["empty"].values() if why == "wc") <= 4
 
 
 def test_head_count_matches_the_roster_of_the_shift(day):
@@ -412,7 +443,7 @@ def test_head_count_matches_the_roster_of_the_shift(day):
         current = s["snap"]["crew"]["now"]
         for code, c in shifts.items():
             if code == current:
-                assert c["on_site"] == c["roster"], (s["t"], code, c)
+                assert c["on_site"] == c["roster"] - c["absent"], (s["t"], code, c)     # the absent stay home
             else:
                 # nobody of the other shifts is here, except a technician who finishes a repair he began
                 rest = [p for p in s["snap"]["people"] if p["sh"] == code]
@@ -420,6 +451,97 @@ def test_head_count_matches_the_roster_of_the_shift(day):
     rosters = {code: c["roster"] for code, c in samples[0]["snap"]["crew"]["shifts"].items()}
     assert set(rosters) == {"A", "B", "C"}
     assert rosters["A"] > rosters["C"] > 30        # the night shift has fewer technicians and loaders
+
+
+def test_the_absent_stay_home_and_only_qualified_people_hold_a_seat(day):
+    plant, samples = day
+    crew = plant.crew
+    whys = Counter(why for _, _, why in crew.absent_log)
+    assert whys["sick"] > 0 and whys["holiday"] > 0
+    off_seen = 0
+    for s in samples:
+        now = s["snap"]["crew"]["now"]
+        off = {a["i"] for a in s["snap"]["crew"]["absent"]}
+        here = {p["i"] for p in s["snap"]["people"] if p["sh"] == now}
+        assert not off & here, (s["t"], off & here)
+        off_seen += len(off)
+        if s["calm"]:
+            assert not s["unqualified"], (s["t"], s["unqualified"])
+    assert off_seen > 0
+    # the MES gets a row for every person of every shift that began: present, sick or on holiday, the seat
+    # taken, whom they cover; every seat is taken by one person or empty for the shift
+    assert len(crew.attendance) >= 3
+    for entry in crew.attendance:
+        rows = entry["rows"]
+        ids = [r["id"] for r in rows]
+        assert len(ids) == len(set(ids)) == len(crew._all_in(entry["shift"]))
+        status = {r["id"]: r["status"] for r in rows}
+        assert set(status.values()) <= {"PRESENT", "SICK", "HOLIDAY"}
+        for r in rows:
+            if r["covers"] is not None:
+                assert status[r["covers"]] in ("SICK", "HOLIDAY") and r["seat"] is not None, r
+            if r["status"] != "PRESENT":
+                assert r["seat"] is None, r
+        seats = [r["seat"] for r in rows if r["seat"]]
+        assert len(seats) == len(set(seats))
+        assert set(seats) | set(entry["uncovered"]) == set(crew.seat_order)
+        assert not set(seats) & set(entry["uncovered"])
+
+
+def test_the_foreman_covers_the_machine_seats_first_and_a_seat_without_a_person_waits(model):
+    """Many off sick: relief people take the machine seats first, then desk operators move over; what
+    nobody qualified can take stays empty, and its machine waits for a person (NO_OPERATOR)."""
+    sick = model.model_copy(update={"crew": model.crew.model_copy(update={"absence": AbsenceRules(sick=0.6, holiday=0.0)})})
+    plant = _plant(sick, seed=7)
+    plant.env.run(until=1)
+    crew = plant.crew
+    until = crew.plan_until
+    ros = crew.roster[crew.current_shift]
+    assert crew.uncovered and len(crew.absent_log) > 10
+    for key, person in crew.holder.items():
+        assert not person.absent and crew.qualified(person, crew.seats[key].skill, until), (key, person.name)
+    reliefs_at = {k for k, p in crew.holder.items() if p in ros["reliefs"]}
+    own = {k for k, p in crew.holder.items() if ros["primaries"][k] is p}
+    for key in crew.uncovered:
+        seat = crew.seats[key]
+        assert not any(crew.qualified(r, seat.skill, until) for r in crew.break_reliefs), key
+        if seat.fixed:
+            # nobody at a desk seat could have moved over, no relief went to a desk seat instead
+            for k in own | reliefs_at:
+                if not crew.seats[k].fixed:
+                    assert not crew.qualified(crew.holder[k], seat.skill, until), (key, k)
+    stations = {st.code: st for st in plant.all_stations()}
+    waiting = [code for key in crew.uncovered if crew.seats[key].fixed for code in crew.seats[key].attends
+               if stations[code].type.manual]
+    assert waiting
+    seen = set()
+    for t in range(60, 3 * 3600, 60):
+        plant.env.run(until=t)
+        seen |= {code for code in waiting if stations[code].reason == "NO_OPERATOR" and stations[code].state is State.STARVED}
+    assert seen, waiting
+
+
+def test_a_certificate_is_renewed_before_the_own_seat_needs_it_and_some_days_after_it_ran_out(model):
+    plant = _plant(model)
+    plant.env.run(until=1)
+    crew = plant.crew
+    shift = crew.current_shift
+    ros = crew.roster[shift]
+    now, day = plant.env.now, 86400.0
+    own = next(p for k, p in ros["primaries"].items() if crew.seats[k].skill == "INSPECTION")
+    lapsed, waits = [p for k, p in ros["primaries"].items() if crew.seats[k].skill == "SMT"][:2]
+    own.skills["INSPECTION"] = now + 3600                       # would run out during the shift
+    lapsed.skills["INSPECTION"] = now - 4 * day                 # ran out before the last course
+    waits.skills["INSPECTION"] = now - 1 * day                  # ran out yesterday: the next course
+    crew.renewals.clear()
+    crew._renew(shift, now + 9 * 3600)
+    assert own.skills["INSPECTION"] > now + 300 * day and lapsed.skills["INSPECTION"] > now + 300 * day
+    assert waits.skills["INSPECTION"] == now - 1 * day and not crew.qualified(waits, "INSPECTION", now)
+    out = crew.renewals_out()
+    assert {(r["id"], r["skill"]) for r in out} >= {(own.id, "INSPECTION"), (lapsed.id, "INSPECTION")}
+    assert all(r["until"].startswith("2027") for r in out)
+    crew.renewals_sent(len(out))
+    assert crew.renewals_out() == []
 
 
 def test_everybody_has_a_half_hour_lunch_and_ten_minutes_of_coffee_in_turns(day):
@@ -438,7 +560,8 @@ def test_everybody_has_a_half_hour_lunch_and_ten_minutes_of_coffee_in_turns(day)
     assert 1 <= peak <= relief + 2        # a relief person for every seat on a break, plus a technician at times
     # nobody is away longer than 30 + 10 minutes, and most people really had them
     assert max(plant.peak_break.values()) <= 40 * 60 + 120     # (a minute more when the way back is busy)
-    assert sum(1 for v in plant.peak_break.values() if v >= 39 * 60) > 100
+    # (the roster of all three shifts, the absent among them: ~70 %; with nine relief people it was 100 of 151)
+    assert sum(1 for v in plant.peak_break.values() if v >= 39 * 60) > 0.6 * len(plant.crew.persons)
 
 
 def test_reliefs_wait_at_the_team_desks_and_nobody_idles_in_the_break_room(day):
@@ -482,8 +605,9 @@ def test_a_shift_change_lets_the_new_people_in_at_the_door_and_the_old_ones_out(
     assert shifts[new_code]["on_site"] > 0 and shifts[old_code]["on_site"] > 0
     around = [x for x in samples if abs(x["t"] - t_change) <= 900]
     assert max(sum(c["walking"] for c in x["snap"]["crew"]["shifts"].values()) for x in around) > 2
-    # an hour later the old ones are gone and the new ones sit in their seats
-    assert later["snap"]["crew"]["shifts"][old_code]["on_site"] == 0
+    # an hour later the old ones are gone (but a technician who finishes a long repair) and the new ones sit in their seats
+    stay = [p for p in later["snap"]["people"] if p["sh"] == old_code]
+    assert len(stay) <= 2 and all(p["r"] in ("MAI", "IT") and p["a"] in ("fix", "walk") for p in stay), stay
 
 
 def test_snapshot_of_people_is_consistent(day):
@@ -500,7 +624,7 @@ def test_snapshot_of_people_is_consistent(day):
             assert per_shift.get(code, 0) == c["on_site"]
             assert c["posts"] <= c["on_site"] and c["break"] <= c["on_site"] and c["walking"] <= c["on_site"]
         for p in people:
-            assert p["r"] in {"OPE", "MAI", "IT", "FOR", "LOG", "MAN"}
+            assert p["r"] in {"OPE", "MAI", "IT", "FOR", "LOG", "MAN", "MAT"}
             if "w" in p:
                 pts = p["w"]["p"]
                 assert len(pts) >= 2 and p["w"]["d"] > 0
@@ -529,7 +653,7 @@ def test_roles_are_present_and_doing_their_jobs(day):
     for s in samples:
         for p in s["snap"]["people"]:
             seen[(p["r"], p["a"])] += 1
-    for role in ("OPE", "MAI", "IT", "FOR", "LOG"):
+    for role in ("OPE", "MAI", "IT", "FOR", "LOG", "MAT"):
         assert sum(v for (r, _), v in seen.items() if r == role) > 0, role
     assert seen[("MAI", "fix")] > 0                  # maintenance repairs machines
     assert seen[("OPE", "walk")] > 0 and seen[("OPE", "post")] > 0
@@ -542,10 +666,11 @@ def test_everybody_passes_the_esd_gate_and_technicians_wear_a_coat(day):
     cfg = plant.model.crew.esd
     role = {p.id: p.role for p in crew.persons.values()}
     assert crew.esd_log and crew.coat_log
-    assert {role[pid] for pid, _ in crew.esd_log} == {"OPERATOR", "MAINTENANCE", "IT", "FOREMAN", "MANAGER"}   # logistics stays outside
+    assert {role[pid] for pid, _ in crew.esd_log} == {"OPERATOR", "MAINTENANCE", "IT", "FOREMAN", "MANAGER", "MATERIAL"}   # logistics stays outside
     assert {role[pid] for pid, _ in crew.coat_log} <= {"MAINTENANCE", "IT", "FOREMAN", "MANAGER"}
     # everybody of the shifts that came in through the entrance went through the gate / put on a coat
-    came = {p.id for p in crew.persons.values() if p.shift in ("B", "C")}
+    off = {pid for _, pid, _ in crew.absent_log}                    # sick or on holiday: did not come
+    came = {p.id for p in crew.persons.values() if p.shift in ("B", "C") and p.id not in off}
     passed = {pid for pid, _ in crew.esd_log}
     assert {pid for pid in came if role[pid] != "LOGISTICS"} <= passed
     coated = {pid for pid, _ in crew.coat_log}
@@ -559,7 +684,7 @@ def test_everybody_passes_the_esd_gate_and_technicians_wear_a_coat(day):
         if not s["calm"]:
             continue
         for p in s["snap"]["people"]:
-            if p["r"] == "OPE":
+            if p["r"] in ("OPE", "MAT"):                      # (the material handler supplies the SMT lines)
                 assert p.get("e") == "g", p
             elif p["r"] in ("MAI", "IT", "FOR", "MAN"):
                 assert p.get("e") == "c", p
@@ -621,14 +746,39 @@ def test_logistics_sit_down_at_their_table_cards_with_a_colleague_a_book_alone(d
     walk = plant.layout.walk
     lounge = {(round(p.x, 1), round(p.y, 1)) for k, p in walk.places.items() if k.startswith("lounge:")}
     seen = Counter()
+    shifts = Counter()
     for s in samples:
         sitting = [p for p in s["snap"]["people"] if p["a"] in ("cards", "read")]
         for p in sitting:
             assert p["r"] == "LOG" and (p["x"], p["y"]) in lounge, p
             seen[p["a"]] += 1
+            shifts[p["sh"]] += 1
         if sitting:
             assert {p["a"] for p in sitting} == ({"cards"} if len(sitting) > 1 else {"read"}), sitting
     assert seen["read"] + seen["cards"] > 0
+    # in every shift, not only the first one: the people of a later shift come in after its routines started
+    assert set(shifts) == set(plant.crew.roster), shifts
+
+
+def test_between_the_calls_people_go_round_their_machines(day):
+    """Operators of the desk seats (and relief people) check the machines of their line, maintenance walks
+    inspection rounds: each stands at the machine, in a place of their own beside it."""
+    plant, samples = day
+    places = plant.layout.walk.places
+    acts = Counter()
+    for s in samples:
+        for p in s["snap"]["people"]:
+            if p["a"] not in ("check", "inspect") or "x" not in p:
+                continue
+            acts[(p["r"], p["a"])] += 1
+            if p["a"] == "check":
+                st = p["s"]
+                assert st in plant.by_code, p
+                at = {(round(places[k].x, 1), round(places[k].y, 1)) for k in (f"spot:{st}", f"hand:spot:{st}")}
+                assert (p["x"], p["y"]) in at, p
+            else:
+                assert p["r"] == "MAI", p
+    assert acts[("OPE", "check")] > 3 and acts[("MAI", "inspect")] > 3, acts
 
 
 def test_at_the_end_of_the_shift_technicians_hand_over_and_go_home_without_the_coat(model):

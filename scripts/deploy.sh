@@ -15,7 +15,7 @@ git archive --format=tar.gz -o "$WORK/mes-lab.tar.gz" HEAD
 echo "deploying $(git rev-parse --short HEAD) to $HOST"
 
 "${SSH[@]}" "rm -rf /tmp/mes-lab-deploy && mkdir -p /tmp/mes-lab-deploy"
-scp -q -i "$KEY" -o BatchMode=yes deploy/setup-server.sh deploy/update.sh deploy/*.service deploy/Caddyfile \
+scp -q -i "$KEY" -o BatchMode=yes deploy/setup-server.sh deploy/update.sh deploy/*.service deploy/Caddyfile deploy/keepalive.py \
     "$WORK/mes-lab.tar.gz" "$HOST:/tmp/mes-lab-deploy/"
 "${SSH[@]}" "sudo bash /tmp/mes-lab-deploy/setup-server.sh $DOMAIN && sudo bash /tmp/mes-lab-deploy/update.sh /tmp/mes-lab-deploy/mes-lab.tar.gz && rm -rf /tmp/mes-lab-deploy"
 echo "done: https://$DOMAIN"

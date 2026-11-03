@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% from "_help.html" import bi, bi_inline, help %}
+{% block title %}Connectivity{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>{{ bi_inline("Connectivity · OPC UA and the Unified Namespace", "Pripojenie · OPC UA a Unified Namespace") }}</h1>
+  <span class="sub">{{ bi_inline("How the data of the machines get out: the OPC UA server of the machines and the MQTT tree of the whole plant",
+                                   "Ako sa dostanú dáta strojov von: OPC UA server strojov a strom MQTT celého závodu") }}</span>
+  <div class="spacer"></div>
+  <span id="cn-state"></span>
+</div>
+
+{% call help("connect") %}
+  <div class="cols">
+    {{ bi("<b>OPC UA</b> is how machines and PLCs offer their data: the machine is a <i>server</i> with an <i>address space</i>, a tree of objects and typed variables (State is a String, Good an Int32, the paste volume a Double with its unit). A <i>client</i> (the MES, a SCADA, an engineer with a tool such as UaExpert) connects, <i>browses</i> the tree, <i>reads</i> values or <i>subscribes</i> to changes. Here the simulated machines run one server: ACME → Plant1 → area → line → station, as ISA-95 names the levels. The right panel browses it live: click an object to go deeper; the NodeId is the address of a value.",
+          "<b>OPC UA</b> je spôsob, akým stroje a PLC ponúkajú svoje dáta: stroj je <i>server</i> s <i>adresným priestorom</i>, stromom objektov a premenných s typom (State je String, Good Int32, objem pasty Double s jednotkou). <i>Klient</i> (MES, SCADA, inžinier s nástrojom ako UaExpert) sa pripojí, <i>prechádza</i> strom, <i>číta</i> hodnoty alebo sa <i>prihlási na odber</i> zmien. Tu simulované stroje bežia ako jeden server: ACME → Plant1 → oblasť → linka → stanica, ako úrovne pomenúva ISA-95. Pravý panel ho prechádza naživo: klik na objekt ide hlbšie; NodeId je adresa hodnoty.") }}
+    {{ bi("<b>MQTT</b> is the opposite style: nobody asks, the sources <i>publish</i> to a <i>broker</i> under a <i>topic</i>, and whoever is interested <i>subscribes</i>. The <b>Unified Namespace</b> (UNS) is one topic tree for the whole company, again by ISA-95: <span class='mono'>acme/plant1/fa/fa-01/scr/state</span>. Only changes are sent (report by exception), each one <i>retained</i>: whoever connects gets the present state at once. A <i>last will</i> tells everybody when a source drops off (<span class='mono'>edge/status</span> goes to online:false).",
+          "<b>MQTT</b> je opačný štýl: nikto sa nepýta, zdroje <i>publikujú</i> do <i>brokera</i> pod <i>tému</i> a kto má záujem, sa <i>prihlási na odber</i>. <b>Unified Namespace</b> (UNS) je jeden strom tém pre celú firmu, opäť podľa ISA-95: <span class='mono'>acme/plant1/fa/fa-01/scr/state</span>. Posielajú sa len zmeny (report by exception), každá <i>uchovaná</i> (retained): kto sa pripojí, dostane hneď súčasný stav. <i>Posledná vôľa</i> (last will) všetkým oznámi, keď zdroj vypadne (<span class='mono'>edge/status</span> prejde na online:false).") }}
+    {{ bi("<b>Who sends what here:</b> the machines are the OPC UA server; the edge gateway next to them publishes their changes into the UNS once a second and sends the condensed history to the MES (REST, as before); the MES adds its own data to the tree (the order each line works on and its queue, <span class='mono'>…/mes/orders</span>) and mirrors the whole tree for the left panel. In real plants both live side by side: OPC UA at the machine, MQTT/UNS to share data across the company. On the public server both listen only inside the machine.",
+          "<b>Kto tu čo posiela:</b> stroje sú OPC UA server; okrajová brána vedľa nich každú sekundu publikuje ich zmeny do UNS a posiela zhrnutú históriu do MES (REST, ako doteraz); MES pridá do stromu svoje dáta (zákazku, na ktorej linka pracuje, a jej front, <span class='mono'>…/mes/orders</span>) a celý strom zrkadlí pre ľavý panel. V skutočných závodoch žijú obe vedľa seba: OPC UA pri stroji, MQTT/UNS na zdieľanie dát v celej firme. Na verejnom serveri obe počúvajú len vo vnútri stroja.") }}
+  </div>
+{% endcall %}
+
+<div class="grid-2" style="grid-template-columns:minmax(0,1fr) minmax(0,1fr)">
+  <div class="panel">
+    <h3>{{ bi_inline("Unified Namespace (MQTT)", "Unified Namespace (MQTT)") }}</h3>
+    <div class="cn-tools"><input id="cn-filter" class="mono" placeholder="acme/plant1/fa/fa-01" autocomplete="off">
+      <span class="muted small" id="cn-uns-info"></span></div>
+    <div id="cn-uns" class="cn-tree"><p class="empty">…</p></div>
+  </div>
+  <div class="panel">
+    <h3>{{ bi_inline("OPC UA server of the machines", "OPC UA server strojov") }}</h3>
+    <div class="cn-tools"><span class="mono small" id="cn-endpoint">{{ opcua_url or "–" }}</span></div>
+    <div id="cn-path" class="cn-path"></div>
+    <div id="cn-opcua" class="table-wrap"><p class="empty">…</p></div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}<script src="/static/connect.js?v={{ version }}"></script>{% endblock %}

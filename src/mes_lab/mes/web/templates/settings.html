@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% from "_help.html" import bi, bi_inline, help %}
+{% block title %}Settings{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>{{ bi_inline("Settings · master data", "Nastavenia · kmeňové dáta") }}</h1>
+  <span class="sub">{{ bi_inline("Products, bills of materials, routings, equipment, reason codes, shifts, labels and users, with the log of every change",
+                                 "Výrobky, kusovníky, postupy, zariadenia, kódy dôvodov, zmeny, štítky a používatelia, so záznamom každej zmeny") }}</span>
+</div>
+
+{% call help("settings") %}
+  <div class="cols">
+    {{ bi("<b>What this is:</b> the <i>master data</i> of the plant, the description the MES works with: which products there are and who buys them, what goes into a board (the bill of materials), which machines a product passes and how long each one takes (the routing), how the lines and machines are called, which defect and downtime codes there are, when the shifts start. The machines get the same data (in a real plant the MES sends a machine its program and times). Anybody may look; changing needs a user with the right role.",
+          "<b>Čo to je:</b> <i>kmeňové dáta</i> závodu, popis, s ktorým MES pracuje: aké výrobky sú a kto ich kupuje, čo ide do dosky (kusovník), cez ktoré stroje výrobok ide a ako dlho na každom trvá (postup), ako sa volajú linky a stroje, aké sú kódy chýb a prestojov, kedy začínajú zmeny. Rovnaké dáta dostanú aj stroje (v skutočnom závode MES posiela stroju program a časy). Pozerať môže každý, meniť len používateľ so správnou rolou.") }}
+    {{ bi("<b>How a change goes:</b> nothing changes in the plant at once. Every change goes into a <i>draft</i> (yellow) and is checked straight away against the whole plant: a change that does not fit (a shift of one hour, a part on a machine the pass does not use, limits outside the process) is refused with the reason. When the draft is complete, <b>Release</b> it with a reason: the MES first runs the plant with it for an hour in the background (a trial run), then it becomes a numbered <i>revision</i>, in force now or from the start of the next shift. Changes the machines need (cycle times, packing, shifts) make the plant start a new run with them, so the shop floor starts empty; names and limits only change the MES.",
+          "<b>Ako ide zmena:</b> v závode sa nič nezmení hneď. Každá zmena ide do <i>návrhu</i> (žltá) a hneď sa skontroluje proti celému závodu: zmena, ktorá nesedí (hodinová zmena, súčiastka na stroji, ktorý ten prechod nepoužíva, hranice mimo procesu), sa odmietne aj s dôvodom. Keď je návrh hotový, <b>vydaj</b> ho s dôvodom: MES s ním najprv nechá závod hodinu bežať na pozadí (skúšobný beh), potom sa z neho stane očíslovaná <i>revízia</i>, platná hneď alebo od začiatku ďalšej zmeny. Zmeny, ktoré potrebujú stroje (takty, balenie, zmeny), spustia v závode nový beh, takže výroba začne prázdna; názvy a hranice menia len MES.") }}
+    {{ bi("<b>How to read the tables:</b> a value with a blue dot differs from the plant as it was built (the config files); the dot says which revision changed it and who. <span class='set-chip d'>yellow</span> = in the draft, not in force yet. ↺ puts a value back to the plant as built. <b>Change log</b> shows every released revision: what was changed, from what to what, who released it, when and why. That is what an auditor asks for (IATF 16949: changes of the process are controlled and traceable).",
+          "<b>Ako čítať tabuľky:</b> hodnota s modrou bodkou sa líši od závodu, ako bol postavený (konfiguračné súbory); bodka povie, ktorá revízia ju zmenila a kto. <span class='set-chip d'>žltá</span> = v návrhu, ešte neplatí. ↺ vráti hodnotu na stav závodu, ako bol postavený. <b>Záznam zmien</b> ukazuje každú vydanú revíziu: čo sa zmenilo, z čoho na čo, kto ju vydal, kedy a prečo. Presne to chce audítor (IATF 16949: zmeny procesu sú riadené a dohľadateľné).") }}
+  </div>
+{% endcall %}
+
+<div class="set-bar panel" id="set-bar"></div>
+<div class="notice error" id="set-error" hidden></div>
+
+<div class="set-tabs">
+  <div class="segmented" id="set-tabs" role="tablist">
+    <button type="button" data-tab="products">{{ bi_inline("Products", "Výrobky") }}</button>
+    <button type="button" data-tab="bom">{{ bi_inline("BOM", "Kusovníky") }}</button>
+    <button type="button" data-tab="routings">{{ bi_inline("Routings", "Postupy") }}</button>
+    <button type="button" data-tab="equipment">{{ bi_inline("Equipment", "Zariadenia") }}</button>
+    <button type="button" data-tab="reasons">{{ bi_inline("Reason codes", "Kódy dôvodov") }}</button>
+    <button type="button" data-tab="shifts">{{ bi_inline("Shifts", "Zmeny") }}</button>
+    <button type="button" data-tab="labels">{{ bi_inline("Labels", "Štítky") }}</button>
+    <button type="button" data-tab="users">{{ bi_inline("Users", "Používatelia") }}</button>
+    <button type="button" data-tab="log">{{ bi_inline("Change log", "Záznam zmien") }}</button>
+  </div>
+</div>
+<div id="set-body"></div>
+
+<dialog class="set-dialog panel" id="set-release"></dialog>
+{% endblock %}
+{% block scripts %}<script src="/static/settings.js?v={{ version }}"></script>{% endblock %}

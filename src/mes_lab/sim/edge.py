@@ -213,6 +213,9 @@ class EdgeGateway:
             "records": self.plant.trace.take_records(),
             "shipments": list(self.dirty_shipments.values()),
             "acks": list(self.plant.acks),
+            "attendance": self.plant.crew.attendance_rows(),
+            "qualifications": self.plant.crew.renewals_out(),
+            "material": self.plant.material.take_report(),
         }
 
     def flush(self) -> dict | None:
@@ -238,6 +241,9 @@ class EdgeGateway:
             self.last_error = None
         self.flushes += 1
         del self.plant.acks[:len(payload["acks"])]
+        self.plant.crew.attendance_sent(len(payload["attendance"]))
+        self.plant.crew.renewals_sent(len(payload["qualifications"]))
+        self.plant.material.report_sent(payload["material"])
         self.dirty_state -= sent_state
         self.dirty_count -= sent_count
         self.dirty_defect -= sent_defect

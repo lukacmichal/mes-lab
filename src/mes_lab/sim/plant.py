@@ -21,6 +21,8 @@ from .crew import Crew
 from .edge import EdgeGateway, NullSink, Sink
 from .line import LineRuntime
 from .logistics import Logistics
+from .material import SmtMaterial
+from .receiving import Receiving
 from .shipping import Shipping
 from .station import Station
 from .supply import Supply
@@ -68,6 +70,9 @@ class PlantSim:
             self.env = simpy.rt.RealtimeEnvironment(factor=1 / speed, strict=False)
         self.sim_flush_s = sim_flush_s
         self.paused = False                 # the MES stopped the clock (see runner.run_live)
+        self.faults: dict[str, dict] = {}       # training scenarios (mes_lab.training): "KIND:target" -> the fault
+        self.fault_log: list[dict] = []         # faults that ended: when and how
+        self.skills_version: int | None = None       # the qualifications of the MES the crew has taken over
         self.scenario_version: int | None = None    # the plant the MES asked for when this run began ...
         self.rebuild = False                # ... and the MES now asks for another one: end this run
         self.goto_s: float | None = None    # the MES asked to run ahead to this simulation time
@@ -87,6 +92,7 @@ class PlantSim:
         self.open_containers: dict[str, Item] = {}  # container serial -> KLT box / pallet
         self.quarantined: dict[str, tuple[Item, tuple, Job | None]] = {}
         self.acks: list[int] = []  # MES commands carried out, reported with the next flush
+        self.adjusting: set[int] = set()   # ADJUST commands taken over by a station (the MES repeats them till acked)
         self.warehouse: dict[str, dict[str, int]] = {
             m.code: {"units": 0, "klt": 0, "pallets": 0} for m in model.finished_goods()}
         self.stock: dict[str, deque[Item]] = {m.code: deque() for m in model.finished_goods()}   # the pallets, oldest first
@@ -132,6 +138,8 @@ class PlantSim:
         self.shipping = Shipping(self)
         self.fleet = Fleet(self)
         self.supply = Supply(self)
+        self.material = SmtMaterial(self)
+        self.receiving = Receiving(self)
         self.env.process(self._prune_traffic())
         self.by_code = {s.code: s for s in self.all_stations()}
 
@@ -403,6 +411,33 @@ class PlantSim:
         """Dispositions from the MES for items in quarantine: a robot takes a released piece from the
         cage back where it belongs; a scrapped one goes into the scrap bin next to the cage."""
         for command in commands:
+            if command["action"] in ("FAULT_START", "FAULT_END"):     # a training scenario of the MES
+                self.acks.append(command["id"])
+                data = command.get("data") or {}
+                if command["action"] == "FAULT_START":
+                    self.start_fault(data)
+                else:
+                    self.end_fault(f"{data.get('kind')}:{data.get('target')}", data.get("how") or "the MES")
+                continue
+            if command["action"] in ("HOLD_LOT", "RELEASE_LOT"):     # a supplier lot on hold: off the machines
+                self.acks.append(command["id"])
+                if command["action"] == "HOLD_LOT":
+                    self.material.hold_lot(command["serial"])
+                else:
+                    self.material.release_lot(command["serial"])
+                continue
+            if command["action"] == "UNLOAD_REEL":         # the MES: the floor life of a reel on a machine ran out
+                self.material.msl_expired(command["serial"])
+                self.acks.append(command["id"])
+                continue
+            if command["action"] == "ADJUST":              # an SPC alarm: the station adjusts, then confirms
+                station = self.by_code.get(command["serial"])
+                if station is None:
+                    self.acks.append(command["id"])
+                elif station.adjust is None and command["id"] not in self.adjusting:
+                    station.adjust = command["id"]
+                    self.adjusting.add(command["id"])
+                continue
             self.acks.append(command["id"])
             entry = self.quarantined.pop(command["serial"], None)
             if entry is None:
@@ -422,12 +457,43 @@ class PlantSim:
             dest = ("sm", target[0]) if where == "supermarket" else ("cell", target[0], target[1])
             self.fleet.release(item, dest)
 
+    # ------------------------------------------------------------------ training scenarios
+    def start_fault(self, data: dict) -> None:
+        """A fault of a training scenario begins (see mes_lab.training): the stations look it up."""
+        key = f"{data['kind']}:{data['target']}"
+        if key not in self.faults:
+            self.faults[key] = {**data, "since": self.env.now}
+            log.info("training fault %s begins", key)
+
+    def end_fault(self, key: str, how: str) -> None:
+        fault = self.faults.pop(key, None)
+        if fault is not None:
+            self.fault_log.append({"kind": fault["kind"], "target": fault["target"], "since": fault["since"],
+                                   "end": self.env.now, "how": how})
+            log.info("training fault %s ends (%s)", key, how)
+
+    def fault_on(self, kind: str, target: str) -> dict | None:
+        return self.faults.get(f"{kind}:{target}") if self.faults else None
+
+    def faults_of(self, kind: str) -> dict[str, dict]:
+        return {f["target"]: f for f in self.faults.values() if f["kind"] == kind} if self.faults else {}
+
+    def faults_out(self) -> dict:
+        iso = self.clock.iso
+        return {"active": [{"kind": f["kind"], "target": f["target"], "since": iso(f["since"])} for f in self.faults.values()],
+                "ended": [{"kind": f["kind"], "target": f["target"], "since": iso(f["since"]), "end": iso(f["end"]),
+                           "how": f["how"]} for f in self.fault_log[-20:]]}
+
     # ------------------------------------------------------------------ control and snapshots
     def apply_control(self, control: dict) -> None:
         if control.get("commands"):
             self.apply_commands(control["commands"])
         for call in control.get("calls") or []:
             self.crew.request(call)
+        skills = control.get("skills")
+        if skills and skills.get("version") != self.skills_version:      # qualifications decided in the MES
+            self.crew.apply_skills(skills.get("items") or [])
+            self.skills_version = skills.get("version")
         speed = control.get("speed")
         if speed and self.speed is not None and float(speed) != self.speed:
             self.set_speed(float(speed))
@@ -438,10 +504,13 @@ class PlantSim:
             self.rebuild = True
         if "goto" in control:
             until = control.get("goto")
+            before = self.goto_s
             self.goto_s = None
             if until:
                 t = (datetime.fromisoformat(until) - self.clock.start).total_seconds()
                 self.goto_s = t if t > self.env.now else None
+            if self.goto_s is not None and before is None:
+                log.info("running ahead to %s", until)
 
     def set_speed(self, speed: float) -> None:
         log.info("simulation speed %sx -> %sx", self.speed, speed)
@@ -497,4 +566,5 @@ class PlantSim:
             "open_klt": dict(open_klt),
             "warehouse": self.warehouse,
             "scrap": dict(self.scrapped),
+            "faults": self.faults_out(),
         }

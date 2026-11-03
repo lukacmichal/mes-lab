@@ -175,7 +175,8 @@
         ${rec.tg ? `<span>${T("Drives to", "Ide do")}</span><span>${esc(FloorRobots.placeName(rec.tg))}</span>` : ""}
         ${rec.to ? `<span>${T("Delivers to", "Vezie do")}</span><span>${rec.to.map((t) => esc(FloorRobots.placeName(t))).join(", ")}</span>` : ""}
         <span>${T("Carries", "Vezie")}</span><span>${load ? `<span class="chips">${load}</span>` : T("nothing", "nič")}</span>
-        <span>${T("Trips this run", "Jázd v tomto behu")}</span><span>${n(rec.o)}</span></div>
+        <span>${T("Trips this run", "Jázd v tomto behu")}</span><span>${n(rec.o)}</span>
+        <span>${T("Right of way", "Prednosť")}</span><span>${T(`the lower the number, the higher; it stepped aside ${n(rec.as || 0)}×`, `čím nižšie číslo, tým vyššia; nabok uhol ${n(rec.as || 0)}×`)}</span></div>
       <p class="muted">${esc(AMR_HELP())}</p>
       <h3 style="margin-top:10px">${T("The fleet", "Flotila")}</h3>${fleetBlock()}
       <div class="links"><button class="btn small primary" type="button" data-follow="robot:${id}">${T("Follow", "Sledovať")}</button>
@@ -194,6 +195,7 @@
       <div class="muted">${T("Shift", "Zmena")} ${esc(rec.sh)} · ${esc(sh.start)}–${esc(sh.end)}</div></div></div>
       <div class="kv"><span>${T("Now", "Teraz")}</span><span>${esc(act)}${target ? " · " + esc(target) : ""}</span>
         ${esdRow(rec)}${carryRow(rec)}
+        ${rec.sk ? `<span>${T("Qualified for", "Kvalifikácie")}</span><span>${rec.sk.map(esc).join(", ")} · <a href="/people">${T("matrix", "matica")}</a></span>` : ""}
         <span>${T("Seat", "Miesto")}</span><span>${seat ? `<b>${esc(rec.seat)}</b> · ${T("looks after", "stará sa o")} ${seat.attends.slice(0, 6).map((c) => esc(c.split("-").pop())).join(", ")}${seat.attends.length > 6 ? "…" : ""}` : T("no seat of their own (technician, relief, foreman, logistics)", "bez vlastného miesta (technik, náhrada, majster, skladník)")}</span></div>
       <p class="muted">${esc(roleHelp(rec.r))}</p>
       <div class="links"><button class="btn small primary" type="button" data-follow="person:${id}">${T("Follow", "Sledovať")}</button>
@@ -208,6 +210,8 @@
         : T("works at the computer", "pracuje na počítači");
     }
     if (rec.a === "idle" && rec.r === "LOG") return T("waits for the next truck", "čaká na ďalší kamión");
+    if (rec.a === "idle" && rec.r === "MAT") return T("at the receiving desk: waits for a truck or the next milk run", "pri príjme: čaká na kamión alebo ďalšiu okružnú jazdu");
+    if (rec.a === "walk" && rec.r === "MAT" && rec.c === "trolley") return T("takes reels round the SMT lines (milk run)", "vezie cievky po linkách SMT (okružná jazda)");
     return T(...(FloorPeople.ACT[rec.a] || ["", ""]));
   }
 
@@ -223,20 +227,26 @@
   function carryRow(rec) {
     const what = { laptop: T("a laptop (IT takes it off the desk to a call)", "notebook (IT si ho berie zo stola na zásah)"),
       meter: T("measuring instruments from the cabinet in the workshop (the fault needs measuring)", "meracie prístroje zo skrinky v dielni (porucha vyžaduje meranie)"),
-      tools: T("a tool box", "kufor s náradím") }[rec.c];
+      tools: T("a tool box", "kufor s náradím"),
+      reel: T("a reel of components for a splice or a changeover", "cievku súčiastok na spojenie alebo prestavbu"),
+      paste: T("a jar of solder paste from the thaw cabinet", "dózu spájkovacej pasty z rozmrazovacej skrine"),
+      box: T("a box of reels from the supplier truck", "krabicu cievok z kamióna dodávateľa"),
+      trolley: T("the reel trolley: reels the SMT lines ordered", "vozík s cievkami, ktoré objednali linky SMT") }[rec.c];
     const piece = rec.h ? `${esc(kindName(rec.h))} ${esc(rec.h.p || "")} ${rec.h.sn ? chipSn(rec.h.sn) : ""}` : "";
     return (what ? `<span>${T("Carries", "Nesie")}</span><span>${esc(what)}</span>` : "") + (piece ? `<span>${T("In the hands", "V rukách")}</span><span>${piece}</span>` : "");
   }
 
   function roleHelp(r) {
     return ({
-      OPE: T("Operators sit in a seat: at a machine (loader, final inspection, packing, repair bench) or at the team desk of the line. For a minor stop or an inspection check the one who looks after the machine walks there. During breaks a relief person sits in; the relief person waits at the team desk of the lines they cover. At the entrance operators pass the ESD gate (wrist strap and footwear test).", "Operátori majú svoje miesto: pri stroji (nakladač, finálna kontrola, balenie, opravárenský stôl) alebo pri tímovom stole linky. Pri krátkom výpadku a overení poplachu kontroly príde ten, kto sa o stroj stará. Počas prestávok na tomto mieste sedí náhradník, ktorý čaká pri tímovom stole svojich liniek. Pri vstupe prejde ESD bránou (test náramku a obuvi)."),
-      MAI: T("Maintenance technicians repair breakdowns and do the planned maintenance. The nearest free one is sent; if all are busy the machine waits. They have a desk with a computer in the workshop, wear an ESD coat in the production and fetch measuring instruments from the cabinet when the fault needs them.", "Technici údržby opravujú poruchy a robia plánovanú údržbu. Pošle sa najbližší voľný; ak sú všetci zaneprázdnení, stroj čaká. V dielni majú stôl s počítačom, vo výrobe ESD plášť a keď porucha vyžaduje meranie, vezmú si meracie prístroje zo skrinky."),
+      OPE: T("Operators sit in a seat: at a machine (loader, final inspection, packing, repair bench) or at the team desk of the line. For a minor stop or an inspection check the one who looks after the machine walks there. Between the calls the operator of a desk seat goes round the machines of the seat and checks one every quarter of an hour or so (state, feeders, trays) with a handheld terminal. During breaks a relief person sits in; between the break rounds the relief person waits at the team desk of the lines they cover and checks their machines too. At the entrance operators pass the ESD gate (wrist strap and footwear test).", "Operátori majú svoje miesto: pri stroji (nakladač, finálna kontrola, balenie, opravárenský stôl) alebo pri tímovom stole linky. Pri krátkom výpadku a overení poplachu kontroly príde ten, kto sa o stroj stará. Medzi volaniami operátor pri stole linky obchádza stroje svojho miesta a zhruba každú štvrťhodinu jeden skontroluje (stav, podávače, zásobníky) s ručným terminálom. Počas prestávok na tomto mieste sedí náhradník, ktorý medzi prestávkovými kolami čaká pri tímovom stole svojich liniek a tiež kontroluje ich stroje. Pri vstupe prejde ESD bránou (test náramku a obuvi)."),
+      MAI: T("Maintenance technicians repair breakdowns and do the planned maintenance. The nearest free one is sent; if all are busy the machine waits. Between the calls they walk inspection rounds along a line (noise, leaks, filters, lubrication); a call takes them from there at once. They have a desk with a computer in the workshop, wear an ESD coat in the production and fetch measuring instruments from the cabinet when the fault needs them.", "Technici údržby opravujú poruchy a robia plánovanú údržbu. Pošle sa najbližší voľný; ak sú všetci zaneprázdnení, stroj čaká. Medzi volaniami robia obchôdzky pozdĺž linky (hluk, úniky, filtre, mazanie); volanie ich odtiaľ hneď odvolá. V dielni majú stôl s počítačom, vo výrobe ESD plášť a keď porucha vyžaduje meranie, vezmú si meracie prístroje zo skrinky."),
       IT: T("The IT technician looks after the network, the computers, the printers and the programming adapters: they come for those faults, with the laptop from their desk.", "IT technik sa stará o sieť, počítače, tlačiarne a programátory: chodí na tieto poruchy s notebookom zo svojho stola."),
       FOR: T("The foreman leads the shift meeting ten minutes after the start of the shift, walks along the lines every hour and is the second level of the andon: a breakdown open for fifteen minutes brings him to the machine. When somebody calls the foreman from the MES, he comes as soon as he has finished what he is doing.", "Majster vedie poradu zmeny desať minút po jej začiatku, každú hodinu obchádza linky a je druhou úrovňou andonu: porucha otvorená pätnásť minút ho privedie k stroju. Keď ho niekto privolá z MES, príde hneď, ako dokončí, čo práve robí."),
       MAN: T("The production manager works the morning shift at his desk in the production office, is at the shift meeting and is the third level of the andon: a breakdown open for an hour brings him to the machine (on the other shifts he is called on the phone).", "Vedúci výroby pracuje na rannej zmene pri svojom stole v kancelárii výroby, je na porade zmeny a je treťou úrovňou andonu: porucha otvorená hodinu ho privedie k stroju (na ostatných zmenách mu zavolajú)."),
-      LOG: T("Logistics workers load the trucks at the dock. Between two trucks they wait in their corner by the dock; after five minutes with nothing to do they sit down at the table: cards when a colleague is there, a book alone. The next truck calls them from there.",
-        "Skladníci nakladajú kamióny na rampe. Medzi dvoma kamiónmi čakajú vo svojom kútiku pri rampe; po piatich minútach bez práce si sadnú k stolu: s kolegom hrajú karty, sami čítajú knihu. Ďalší kamión ich odtiaľ zavolá."),
+      MAT: T("The material handler receives the supplier trucks at goods-in (every reel scanned against the delivery note, labelled, into the store) and supplies the reel racks of the SMT lines: oldest reel first, round the lines every half hour (milk run), at once when a line waits for a reel. Passes the ESD gate: the SMT lines are in the ESD area.",
+        "Zásobovač prijíma kamióny dodávateľov (každú cievku naskenuje podľa dodacieho listu, označí štítkom a uloží do skladu) a zásobuje regály cievok pri linkách SMT: najstaršia cievka prvá, okolo liniek každú polhodinu (okružná jazda), hneď, keď linka čaká na cievku. Prechádza ESD bránou: linky SMT sú v ESD zóne."),
+      LOG: T("One logistics worker a shift loads the trucks at the dock (one or two pallets each, a few minutes). Between two trucks they wait in their corner by the dock; after five minutes with nothing to do they sit down at the table: cards when a colleague is there, a book alone. The next truck calls them from there.",
+        "Jeden skladník na zmenu nakladá kamióny na rampe (po jednej či dvoch paletách, pár minút). Medzi dvoma kamiónmi čakajú vo svojom kútiku pri rampe; po piatich minútach bez práce si sadnú k stolu: s kolegom hrajú karty, sami čítajú knihu. Ďalší kamión ich odtiaľ zavolá."),
     })[r] || "";
   }
 
@@ -266,6 +276,7 @@
       <table><tr><th>${T("Shift", "Zmena")}</th><th></th><th class="num">${T("roster", "zoznam")}</th><th class="num">${T("on site", "v závode")}</th><th class="num">${T("at posts", "na miestach")}</th><th class="num">${T("break", "prestávka")}</th><th class="num">${T("walking", "idú")}</th></tr>${rows}</table>
       <p class="muted">${T("Breaks: a half hour lunch and, on top of it, ten minutes at the coffee machine for everybody (the walks are part of them); a relief person sits in for the operator, technicians go when they are idle. Now and then somebody walks to the toilet. At a shift change the new people come in at the entrance (operators through the ESD gate, technicians, IT and the foreman put on an ESD coat) and take over their seats; the old ones walk out.", "Prestávky: pre každého polhodina na obed a k tomu desať minút pri kávovare (cesty sa počítajú do nich); operátora zastúpi záskok, technici idú, keď nemajú prácu. Občas niekto zájde na toaletu. Pri striedaní zmien noví ľudia vojdú vchodom (operátori cez ESD bránu, technici, IT a majster si obliekajú ESD plášť) a prevezmú svoje miesta, starí odídu.")}</p>
       <h3>${T("On site now", "Teraz v závode")}</h3><table>${roleRows}</table>
+      ${(crew.absent || []).length ? `<h3 style="margin-top:12px">${T("Off this shift", "Dnes chýbajú")}</h3><p class="muted">${crew.absent.map((a) => `${esc(a.n)} (${a.why === "sick" ? T("sick", "chorý") : T("holiday", "dovolenka")})`).join(", ")}${(crew.uncovered || []).length ? `<br><b style="color:var(--s-down)">${T("Seats empty for the shift", "Prázdne miesta celú zmenu")}: ${crew.uncovered.map(esc).join(", ")}</b>` : ""} · <a href="/people">${T("people and qualifications", "ľudia a kvalifikácie")}</a></p>` : ""}
       <h3 style="margin-top:12px">${T("Open calls for a technician", "Otvorené volania na technika")}</h3>
       ${calls ? `<table>${calls}</table>` : `<p class="muted">${T("None: every machine is looked after.", "Žiadne: o všetky stroje je postarané.")}</p>`}
       ${answered ? `<h3 style="margin-top:12px">${T("Answered calls from the MES", "Vybavené privolania z MES")}</h3><table>${answered}</table>` : ""}
@@ -336,7 +347,7 @@
       <td><b>${esc(l.code)}</b></td><td>${pill(l.status)}</td>
       <td class="num">${n(l.output.this_hour)}</td></tr>`).join("");
     return `<h3>${T("Whole plant", "Celý závod")}</h3>
-      <p class="muted">${T("Click a line in the plan or in this list to fly into it.", "Klikni na linku v pláne alebo v tomto zozname a vletíš do nej.")}</p>
+      <p class="muted">${T("Click a line in the plan or in this list to fly into it.", "Klikni na linku v pláne alebo v tomto zozname: plán sa na ňu priblíži a vpravo ukáže jej čísla.")}</p>
       <table><tr><th>${T("Line", "Linka")}</th><th>${T("State", "Stav")}</th><th class="num">${T("this hour", "táto hodina")}</th></tr>${items || ""}</table>`;
   }
 
@@ -349,7 +360,9 @@
     const shiftRow = lineData && lineData.cells.flatMap((c) => c.stations).find((s) => s.code === code);
     const state = info ? info.s : "UNKNOWN";
     const phase = info ? (PHASE[info.ph] || ["", ""]) : ["", ""];
-    const prog = info && info.w ? `<div class="progress"><div style="width:${Math.round(info.p * 100)}%"></div></div>` : "";
+    const prog = info && info.w ? `<div class="progress"><div style="width:${Math.round(info.p * 100)}%"></div></div>`
+      : info && info.co ? `<div class="progress"><div style="width:${Math.round(info.co.p * 100)}%;background:#2f73e0"></div></div>
+        <span class="muted">${T("changeover", "prestavba")} ${Math.round(info.co.p * 100)} % · ${T("still", "ešte")} ${esc(duration(info.co.left))}</span>` : "";
     const piece = info && (info.it || (info.out && info.out[0]) || (info.ov && info.ov.length))
       ? describePiece(info) : T("nothing inside", "vnútri nič nie je");
     const counts = shiftRow ? `<span>${T("this shift", "táto zmena")}</span><span><b>${n(shiftRow.shift.processed)}</b> ${T("done", "hotových")}${shiftRow.shift.bad ? ` · <span style="color:var(--s-down)">${n(shiftRow.shift.bad)} NOK</span>` : ""}</span>` : "";
@@ -375,7 +388,8 @@
     const who = cr.p && Floor.S.people.get(cr.p);
     const phase = cr.ph === "wait" ? T("waiting for", "čaká na") : cr.ph === "walk" ? T("on the way:", "ide:") : T("at the machine:", "pri stroji:");
     const what = cr.k === "call" ? (cr.role === "IT" ? T("the IT technician", "IT technika") : T("a maintenance technician", "technika údržby")) : T("the operator", "operátora");
-    return `<p><b>${esc(phase)}</b> ${who ? `<a href="#" data-pick-person="${who.id}">${esc(who.rec.n)}</a>` : esc(what)}</p>`;
+    const why = cr.k === "changeover" ? ` <span class="muted">${T("(changes the machine over)", "(prestavuje stroj)")}</span>` : "";
+    return `<p><b>${esc(phase)}</b> ${who ? `<a href="#" data-pick-person="${who.id}">${esc(who.rec.n)}</a>` : esc(what)}${why}</p>`;
   }
 
   /* what lies in the red NOK tote of the machine, for a robot */
@@ -468,16 +482,18 @@
     if (!selected) { card.classList.remove("show"); return; }
     const L = Floor.layout;
     let html = "";
-    if (selected.station) {
+    if (selected.station && !selected.piece) {
       const code = selected.station, st = L.stations[code], info = Floor.stationInfo(code);
       const ph = info ? (PHASE[info.ph] || ["", ""]) : ["", ""];
-      const prog = info && info.w ? `<div class="progress"><div style="width:${Math.round(info.p * 100)}%"></div></div>` : "";
-      html = `<div class="head"><b>${esc(code)}</b>${pill(info ? info.s : "UNKNOWN")}<button class="x" type="button" data-act="plant" aria-label="Close">×</button></div>
+      const prog = info && info.w ? `<div class="progress"><div style="width:${Math.round(info.p * 100)}%"></div></div>`
+      : info && info.co ? `<div class="progress"><div style="width:${Math.round(info.co.p * 100)}%;background:#2f73e0"></div></div>
+        <span class="muted">${T("changeover", "prestavba")} ${Math.round(info.co.p * 100)} % · ${T("still", "ešte")} ${esc(duration(info.co.left))}</span>` : "";
+      html = `<div class="head"><b>${esc(code)}</b>${pill(info ? info.s : "UNKNOWN")}<button class="x" type="button" data-act="close" aria-label="Close">×</button></div>
         <div class="muted">${esc(st.name)}</div><div>${esc(T(...ph))}${info && info.w ? ` · ${Math.round(info.p * 100)} %` : ""}</div>${prog}
         <div class="muted">${info && (info.it || info.out || info.ov) ? describePiece(info) : T("nothing inside", "vnútri nič nie je")}</div>`;
-    } else if (selected.line) {
+    } else if (selected.line && !selected.person && !selected.piece && !selected.robot) {
       const row = lineOf(selected.line);
-      html = `<div class="head"><b>${esc(selected.line)}</b>${row ? pill(row.status) : ""}<button class="x" type="button" data-act="plant" aria-label="Close">×</button></div>
+      html = `<div class="head"><b>${esc(selected.line)}</b>${row ? pill(row.status) : ""}<button class="x" type="button" data-act="close" aria-label="Close">×</button></div>
         ${row ? `<div class="muted">${esc(row.name)}${row.detail ? " · " + esc(row.detail) : ""}</div>
         <div>${row.job ? `<b>${esc(row.job.material)}</b> · ${esc(row.job.operation_name || row.job.operation)} · ${n(row.job.good)}/${n(row.job.expected)} ${esc(row.job.piece)}` : esc(T("no active job", "bez aktívnej úlohy"))}</div>
         <div class="muted">${T("this hour", "táto hodina")}: <b>${n(row.output.this_hour)}</b> ${esc(row.output.unit)} · ${T("details below ↓", "podrobnosti nižšie ↓")}</div>` : ""}`;
@@ -485,24 +501,24 @@
       const p = Floor.S.people.get(selected.person);
       if (p) {
         const rec = p.rec, role = FloorPeople.ROLE[rec.r] || FloorPeople.ROLE.OPE;
-        html = `<div class="head"><b>${esc(rec.n)}</b><span class="pill" style="--st:${role.color}">${esc(T(...role.name))}</span><button class="x" type="button" data-act="plant" aria-label="Close">×</button></div>
+        html = `<div class="head"><b>${esc(rec.n)}</b><span class="pill" style="--st:${role.color}">${esc(T(...role.name))}</span><button class="x" type="button" data-act="close" aria-label="Close">×</button></div>
           <div class="person-card">${FloorPeople.portrait(rec)}<div class="muted">${T("Shift", "Zmena")} ${esc(rec.sh)} · ${esc(nowText(rec))}${rec.s ? " · " + esc(rec.s) : ""}</div></div>`;
       }
     } else if (selected.piece || selected.sn) {
       const sp = selected.piece && Floor.S.sprites.get(selected.piece);
-      html = `<div class="head"><b>${sp ? esc(kindName(sp.desc)) + " " + esc(sp.desc.p || "") : esc(selected.sn)}</b><button class="x" type="button" data-act="plant" aria-label="Close">×</button></div>
+      html = `<div class="head"><b>${sp ? esc(kindName(sp.desc)) + " " + esc(sp.desc.p || "") : esc(selected.sn)}</b><button class="x" type="button" data-act="close" aria-label="Close">×</button></div>
         <div class="muted mono">${sp && sp.desc.sn ? esc(sp.desc.sn) : esc(selected.sn || T("no serial number yet", "ešte bez sériového čísla"))}</div>`;
     } else if (selected.truck) {
       const t = Floor.trucksNow().find((x) => x.i === selected.truck);
-      html = `<div class="head"><b>${t ? esc(t.c) : T("Truck", "Kamión")}</b>${t ? `<span class="muted">${esc(t.plate)}</span>` : ""}<button class="x" type="button" data-act="plant" aria-label="Close">×</button></div>
+      html = `<div class="head"><b>${t ? esc(t.c) : T("Truck", "Kamión")}</b>${t ? `<span class="muted">${esc(t.plate)}</span>` : ""}<button class="x" type="button" data-act="close" aria-label="Close">×</button></div>
         <div class="muted">${t ? `${t.load.length}/${t.cap} ${T("pallets", "paliet")}` : ""}</div>`;
     } else if (selected.robot) {
       const r = Floor.S.robots.get(selected.robot);
-      if (r) html = `<div class="head"><b>${esc(r.rec.n)}</b>${robotPill(r.rec)}<button class="x" type="button" data-act="plant" aria-label="Close">×</button></div>
+      if (r) html = `<div class="head"><b>${esc(r.rec.n)}</b>${robotPill(r.rec)}<button class="x" type="button" data-act="close" aria-label="Close">×</button></div>
         <div class="muted">${T("battery", "batéria")} ${Number(r.rec.b).toFixed(1)} %${r.rec.to ? " · → " + r.rec.to.map((t) => esc(FloorRobots.placeName(t))).join(", ") : ""} · ${T("details below ↓", "podrobnosti nižšie ↓")}</div>`;
     } else if (selected.building) {
       const b = selected.building === "DEPOT" ? { name: "AMR depot", name_sk: "Depo AMR" } : L.buildings.find((x) => x.id === selected.building);
-      html = `<div class="head"><b>${esc(MES.lang() === "sk" ? b.name_sk : b.name)}</b><button class="x" type="button" data-act="plant" aria-label="Close">×</button></div>
+      html = `<div class="head"><b>${esc(MES.lang() === "sk" ? b.name_sk : b.name)}</b><button class="x" type="button" data-act="close" aria-label="Close">×</button></div>
         <div class="muted">${selected.pallet ? esc(selected.pallet) + " · " : ""}${T("details below ↓", "podrobnosti nižšie ↓")}</div>`;
     }
     card.innerHTML = html;
@@ -532,6 +548,7 @@
       if (!hit.building && !hit.piece && !hit.sn && !hit.truck) hit = null;
     }
     selected = hit;
+    if (view) view.selected = hit;                  // the ring on the plan goes with the card
     if (hit && hit.station) CallPanel.setStation(hit.station);
     clearTimeout(lineTimer);
     lineData = null;
@@ -602,9 +619,13 @@
     } else if (hit.truck) {
       const t = Floor.trucksNow().find((x) => x.i === hit.truck);
       if (t) html = `<b>${esc(t.c)}</b> · ${esc(t.plate)}<br>${t.load.length}/${t.cap} ${T("pallets", "paliet")}`;
+    } else if (hit.nok) {
+      const inside = ((Floor.floor && Floor.floor.boxes) || {})[`gap:${hit.nok}`] || [];
+      html = `<b>${T("NOK tote", "NOK prepravka")}</b> · ${esc(hit.line)}<br><span class="muted">${T("A piece the machine before it found bad goes in here; a robot takes it to repair.", "Sem stroj pred ňou odloží chybný kus; robot ho odvezie do opráv.")}</span>
+        <br>${inside.length ? `${inside.length} ${T("pieces inside", "ks vnútri")}` : T("empty", "prázdna")}`;
     } else if (hit.line) {
       const row = lineOf(hit.line);
-      html = `<b>${esc(hit.line)}</b>${row ? " · " + esc(row.name) + "<br>" + pill(row.status) : ""}<br><span class="muted">${T("click to fly in", "klikni a vletíš")}</span>`;
+      html = `<b>${esc(hit.line)}</b>${row ? " · " + esc(row.name) + "<br>" + pill(row.status) : ""}<br><span class="muted">${T("click: zoom onto the line and show its numbers", "klik: priblíži linku a ukáže jej čísla")}</span>`;
     } else if (hit.thing !== undefined) {
       const th = FloorPeople.thingTip(hit.thing, MES.lang());
       if (th) html = `<b>${esc(th.name)}</b>${th.extra ? ` · ${esc(th.extra)}` : ""}${th.what ? `<br><span class="muted">${esc(th.what)}</span>` : ""}`;
@@ -654,6 +675,7 @@
     const act = e.target.closest("[data-act]");
     if (act) {
       if (act.dataset.act === "plant") select(null);
+      if (act.dataset.act === "close") select(null, false);            // closing a card leaves the camera where it is
       if (act.dataset.act === "line" && selected) select({ line: selected.line });
       if (act.dataset.act === "dock") select({ building: "FGW" });
     }
@@ -678,10 +700,11 @@
     window.addEventListener("resize", sizeStage);
     view = new FloorView(canvas, {
       onSelect: (hit) => {
-        if (!hit) { select(null); return; }
+        if (!hit) { select(null, false); return; }                // a click on the bare floor only clears the choice
         if (hit.piece) { const sp = Floor.S.sprites.get(hit.piece); select({ ...hit, sn: sp && sp.desc.sn }); return; }
         // far out a click picks the line; close up it picks the machine
         if (hit.station && view.cam.k < 1.1) select({ line: hit.line });
+        else if (hit.line && !hit.station && !hit.person && view.cam.k >= 1.1) select(hit, false);    // close up the camera stays
         else select(hit);
       },
       onHover: hover,

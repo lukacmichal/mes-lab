@@ -19,14 +19,23 @@
 </head>
 <body>
 <header class="topbar">
-  <a class="brand" href="/">
+  <button type="button" class="nav-toggle" id="nav-toggle" aria-controls="main-nav" aria-expanded="false" aria-label="Menu" title="Menu">
+    <svg viewBox="0 0 16 16" width="18" height="18" aria-hidden="true"><path d="M2 3.5h12M2 8h12M2 12.5h12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+  </button>
+  <a class="brand" href="/" title="ACME Plant 1 · {{ plant.company }}">
     <span class="logo">MES</span>
-    <span>ACME Plant 1<small>{{ plant.company }}</small></span>
+    <span class="name">ACME Plant 1<small>{{ plant.company }}</small></span>
   </a>
   <a class="maker" href="https://github.com/lukacmichal" target="_blank" rel="noopener" title="Designed and built by Michal Lukáč — GitHub">{% include "_github.html" %}<span>by Michal Lukáč</span></a>
-  <nav class="nav">
+  <nav class="nav" id="main-nav" aria-label="Pages">
     <a href="/" class="{{ 'active' if active == 'floor' }}">Floor</a>
-    <a href="/overview" class="{{ 'active' if active == 'overview' }}">Overview</a>
+    <details class="{{ 'active' if active in ('overview', 'connect') }}">
+      <summary>Overview ▾</summary>
+      <div class="menu one">
+        <a href="/overview">Overview · every line at a glance</a>
+        <a href="/connect">Connectivity · OPC UA and MQTT (UNS)</a>
+      </div>
+    </details>
     <details class="{{ 'active' if active == 'lines' }}">
       <summary>Lines ▾</summary>
       <div class="menu">
@@ -37,18 +46,33 @@
       </div>
     </details>
     <a href="/andon" class="{{ 'active' if active == 'andon' }}">Andon</a>
+    <a href="/people" class="{{ 'active' if active == 'people' }}">People</a>
+    <a href="/material" class="{{ 'active' if active == 'material' }}">Material</a>
     <a href="/kpi" class="{{ 'active' if active == 'kpi' }}">KPI</a>
     <a href="/tuning" class="{{ 'active' if active == 'tuning' }}">Tuning</a>
-    <a href="/orders" class="{{ 'active' if active == 'orders' }}">Orders</a>
+    <details class="{{ 'active' if active in ('orders', 'erp') }}">
+      <summary>Orders ▾</summary>
+      <div class="menu one">
+        <a href="/orders">Orders · work orders and jobs of the MES</a>
+        <a href="/erp">ERP · call-offs, production orders, the interface</a>
+      </div>
+    </details>
     <a href="/trace" class="{{ 'active' if active == 'trace' }}">Trace</a>
-    <a href="/quality" class="{{ 'active' if active == 'quality' }}">Quality</a>
-    <a href="/holds" class="{{ 'active' if active == 'holds' }}">Holds</a>
+    <details class="{{ 'active' if active in ('quality', 'spc', 'holds', 'training') }}">
+      <summary>Quality ▾</summary>
+      <div class="menu one">
+        <a href="/quality">Quality · repairs, quarantine, testers</a>
+        <a href="/spc">SPC · control charts</a>
+        <a href="/holds">Holds · containment</a>
+        <a href="/training">Training · scenarios in the live plant</a>
+      </div>
+    </details>
+    <a href="/settings" class="{{ 'active' if active == 'settings' }}">Settings</a>
     <a href="/guide" class="{{ 'active' if active == 'guide' }} guide-link">Guide</a>
   </nav>
   <form class="search" action="/trace" method="get" role="search">
     <input name="q" placeholder="Serial or order…" aria-label="Search a serial number or work order" autocomplete="off">
   </form>
-  <div class="spacer"></div>
   <div class="clock">
     <div class="lang" role="group" aria-label="Language of the explanations">
       <button type="button" data-lang="en" title="Explanations in English">EN</button>
@@ -57,28 +81,28 @@
     <span class="badge" id="shift-badge">Shift –</span>
     <div class="simctl">
       <label class="speed" title="Simulation speed">
-        <select id="speed-select" aria-label="Simulation speed"{% if not can_act %} disabled title="Sign in to change the simulation speed"{% endif %}>
+        <select id="speed-select" aria-label="Simulation speed"{% if not can('plant') %} disabled title="{{ 'Your role may not change the speed' if can_act else 'Sign in to change the simulation speed' }}"{% endif %}>
           {% for s in [1, 10, 30, 60, 120, 300, 600] %}<option value="{{ s }}">{{ s }}×</option>{% endfor %}
         </select>
       </label>
       <button type="button" class="ctl" id="sim-pause" aria-label="Pause the plant"
-              title="{{ 'Pause: the plant stands still (machines, people, robots)' if can_act else 'Sign in to pause the plant' }}"{% if not can_act %} disabled{% endif %}>
+              title="{{ 'Pause: the plant stands still (machines, people, robots)' if can('plant') else 'Sign in to pause the plant' }}"{% if not can('plant') %} disabled{% endif %}>
         <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path class="i-pause" d="M4 3h3v10H4zM9 3h3v10H9z" fill="currentColor"/><path class="i-play" d="M4 2.5v11l9-5.5z" fill="currentColor"/></svg>
       </button>
       <button type="button" class="ctl" id="sim-goto" aria-label="Go to a time"
-              title="{{ 'Go to a time: the plant runs ahead as fast as it can' if can_act else 'Sign in to send the plant ahead in time' }}"{% if not can_act %} disabled{% endif %}>
+              title="{{ 'Go to a time: the plant runs ahead as fast as it can' if can('plant') else 'Sign in to send the plant ahead in time' }}"{% if not can('plant') %} disabled{% endif %}>
         <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M1.5 3v10l6-5zM8 3v10l6-5z" fill="currentColor"/></svg>
       </button>
       <div class="goto-pop panel" id="goto-pop" hidden></div>
     </div>
-    <div>
+    <div class="plant-time" title="Plant time: the clock and the calendar of the plant">
       <div class="time" id="plant-clock">--:--:--</div>
-      <div class="date" id="plant-date">plant time</div>
+      <div class="date"><span id="plant-date"></span><span class="pt"> · plant time</span></div>
     </div>
     <span class="dot" id="live-dot" title="Simulation connection"></span>
     {% if login_enabled %}
       {% if user %}
-        <button type="button" class="logout" id="logout" title="Signed in as {{ user }}">{{ user }} · Sign out</button>
+        <button type="button" class="logout" id="logout" title="Signed in as {{ user }}"><span class="who">{{ user }} · Sign out</span><span class="out">Sign out</span></button>
       {% else %}
         <a class="logout" href="/login?next={{ request.url.path }}" title="Sign in to put holds, release or scrap pieces and change the speed">Sign in</a>
       {% endif %}
@@ -107,7 +131,9 @@
 <script>
   window.MES_TEXT = {states: {{ state_help|tojson }}, stations: {{ station_help|tojson }}, units: {{ unit_help|tojson }}};
   window.MES_CAN_ACT = {{ "true" if can_act else "false" }};
+  window.MES_PERMS = {{ perms|tojson }};
   window.MES_VERSION = {{ version|tojson }};
+  window.MES_TZ = {{ plant.timezone|tojson }};
 </script>
 <script src="/static/app.js?v={{ version }}"></script>
 <script src="/static/floor-core.js?v={{ version }}"></script>

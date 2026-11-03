@@ -398,3 +398,64 @@ def test_robots_carry_rejected_pieces_to_repair_and_back(model):
     assert not [k for k in kinds if k in ("rwi", "rwo", "rpr2sm")]
     assert plant.fleet.done > 0
     assert math.isfinite(plant.env.now)
+
+
+def test_the_hall_has_walls_around_the_plant_and_the_truck_yards_stay_outside(model):
+    layout = build_layout(model)
+    pts = layout.hall["pts"]
+
+    def inside(x, y):                                        # even-odd rule
+        hit = False
+        for (x1, y1), (x2, y2) in zip(pts, pts[1:] + pts[:1]):
+            if (y1 > y) != (y2 > y) and x < x1 + (y - y1) * (x2 - x1) / (y2 - y1):
+                hit = not hit
+        return hit
+
+    for code, st in layout.stations.items():
+        assert inside(st["cx"], st["cy"]), code
+    for b in layout.buildings:
+        assert inside(b["x"] + b["w"] / 2, b["y"] + b["h"] / 2), b["id"]
+    for bay in layout.bays:                                  # a parked truck stands outside, at its gate
+        assert not inside(bay["x"], bay["rear_y"] + bay["trailer_l"] / 2)
+        assert any(abs(g["x"] - bay["x"]) < 1 for g in layout.hall["gates"])
+    recv = layout.receiving["bay"]
+    assert not inside(recv["x"], recv["rear_y"] + recv["trailer_l"] / 2)
+
+
+def test_a_changeover_is_done_by_the_operator_and_reports_how_far_it_is(model):
+    plant = _plant(model)
+    seen = 0
+    for minute in range(5, 16 * 60, 2):
+        plant.env.run(until=minute * 60)
+        snap = plant.floor_snapshot()
+        people = {p["i"]: p for p in snap["people"]}
+        for code, e in snap["stations"].items():
+            if e["s"] != "CHANGEOVER":
+                continue
+            cr = e.get("cr")
+            if cr is not None and cr["k"] == "changeover" and cr["ph"] != "fix":
+                assert "co" not in e or code.endswith("OVN"), (code, e)      # the clock starts with the person there
+            if "co" in e:
+                total, left = e["co"]
+                assert total > 0 and 0 <= left <= total, (code, e["co"])
+                if cr is not None and cr["ph"] == "fix" and cr["p"] is not None:
+                    assert people[cr["p"]]["a"] == "setup", (code, people[cr["p"]])
+                    seen += 1
+    assert seen > 10
+
+
+def test_pieces_ride_the_conveyor_between_two_cells(model):
+    """A piece put on the conveyor reaches the next machine only after the ride the plan shows."""
+    plant = _plant(model, seed=5)
+    rides = 0
+    for second in range(600, 3 * 3600, 30):
+        plant.env.run(until=second)
+        for st in plant.all_stations():
+            item = st.item
+            if item is not None and item.belt is not None and item.belt[1] > plant.env.now:
+                assert st.phase == "in"                                        # the machine waits for it at its entrance
+                t0, t1 = item.belt
+                assert t1 - t0 == pytest.approx(next(s for s in plant.all_stations()
+                                                     if s.cell.index + 1 == st.cell.index and s.line is st.line).belt_s, abs=0.01)
+                rides += 1
+    assert rides > 10

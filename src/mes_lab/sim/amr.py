@@ -44,12 +44,14 @@ from .traffic import ROBOT
 if TYPE_CHECKING:
     from .plant import PlantSim
 
+ASIDE_CHECK_S = 2.0      # a waiting robot looks this often whether it stands in the way of one with the right of way
 Dest = tuple    # ("repair",) | ("quar",) | ("cell", line, cell) | ("sm", material) | ("kan", line) | ("gi",)
 
 
 class Robot:
     __slots__ = ("id", "name", "home", "place", "walk", "trail", "state", "load", "battery", "_bt", "_rate",
-                 "target", "busy", "wake", "orders", "km", "busy_s", "drive_s", "charge_s", "holds")
+                 "target", "busy", "wake", "orders", "km", "busy_s", "drive_s", "charge_s", "holds", "want",
+                 "asides", "nudged")
 
     def __init__(self, rid: int, home: str, now: float):
         self.id = rid
@@ -70,6 +72,9 @@ class Robot:
         self.km = 0.0
         self.busy_s = 0.0          # time on transports (driving, docking, waiting at crossings)
         self.holds: tuple[str, simpy.Resource] | None = None     # the stop it stands at, reserved until it leaves
+        self.want: str | None = None                               # the stop it waits for (taken by another robot)
+        self.asides = 0                                            # how often it stepped aside for another robot
+        self.nudged = False                                        # it waits, and stands in the way of a driving robot
         self.drive_s = 0.0
         self.charge_s = 0.0
 
@@ -206,13 +211,16 @@ class Fleet:
         who = ("R", robot.id)
         state = robot.state
         faces = (self.lanes.places[robot.place].face, self.lanes.places[dest].face)
-        for _ in range(60):
+        for _ in range(150):
             wait, _plan = self.traffic.plan(who, ROBOT, pts, self.cfg.speed, faces=faces)
             if wait is not None:
                 break
             robot.state = "yield"                                  # a robot stands in the way
+            for other in self.robots:                              # one that only waits there moves aside
+                if ("R", other.id) in self.traffic.blockers and other.want is not None:
+                    other.nudged = True
             yield self.env.timeout(2.0)
-        else:                                                      # two minutes: go (and count it)
+        else:                                                      # five minutes: go (and count it)
             self.traffic.go(who, _plan)
             wait = 0.0
         if wait > 0:
@@ -243,23 +251,55 @@ class Fleet:
 
     def _go(self, robot: Robot, stop: str, state: str):
         """SimPy generator: reserve the stop, then drive there; it stays reserved until the robot leaves
-        it again. While another robot stands there, this one waits where it is; when that takes long
-        (the other one may wait for the very place this one stands at), it gives way: it drives to its
-        charger and tries again from there."""
-        while True:
-            req = self.docks[stop].request()
-            if not req.triggered:
-                robot.state = "waiting"
-                got = yield req | self.env.timeout(45)
-                if req not in got:
-                    req.cancel()
-                    robot.state = "to_charger"
-                    yield from self.drive(robot, robot.home)
-                    continue
-            break
+        it again. While another robot stands there, this one waits where it is. It steps aside to the
+        nearest free stop and waits there when it stands in the way of a robot that drives past, or when a
+        robot with a lower number (it has the right of way) waits for the stop this one stands at; that also
+        undoes two robots waiting for each other's stop."""
+        req = self.docks[stop].request()
+        if not req.triggered:
+            robot.state = "waiting"
+            robot.want = stop
+            while True:
+                got = yield req | self.env.timeout(ASIDE_CHECK_S)
+                if req in got:
+                    break
+                if robot.nudged or self._in_the_way(robot):
+                    robot.nudged = False
+                    yield from self._step_aside(robot, stop)
+                    robot.state = "waiting"
+            robot.want = None
         robot.state = state
         yield from self.drive(robot, stop)
         robot.holds = (stop, req)
+
+    def _in_the_way(self, robot: Robot) -> bool:
+        """Does a robot with the right of way (a lower number) wait for the stop this one stands at?"""
+        if robot.holds is None:
+            return False
+        here = robot.holds[0]
+        return any(o.want == here and o.id < robot.id for o in self.robots if o is not robot)
+
+    def _step_aside(self, robot: Robot, wanted: str):
+        """SimPy generator: drive to the nearest free stop (no robot there or on the way, nothing waits
+        there for a robot, the way there clear right now), the robot's own charger at the latest, and stand
+        there. With no such stop it stays and looks again a moment later."""
+        wanted_by = {o.want for o in self.robots if o.want}
+        free = [key for key, dock in self.docks.items()
+                if key not in (wanted, robot.place) and dock.count == 0 and not dock.queue
+                and key not in wanted_by and not self.boxes.get(key) and key not in self.claimed
+                and (not key.startswith("charge:") or key == robot.home)]
+        free.sort(key=lambda p: self.lanes.duration(robot.place, p))
+        here = self.lanes.places[robot.place].face
+        aside = next((key for key in free[:12]
+                      if self.traffic.free_now(("R", robot.id), ROBOT, self.lanes.path(robot.place, key), self.cfg.speed,
+                                               faces=(here, self.lanes.places[key].face))), None)
+        if aside is None:
+            return
+        req = self.docks[aside].request()                          # free: granted at once
+        robot.state = "aside"
+        robot.asides += 1
+        yield from self.drive(robot, aside)
+        robot.holds = (aside, req)
 
     def _run(self, robot: Robot):
         cfg = self.cfg
@@ -355,21 +395,30 @@ class Fleet:
             plant.back_to_line(item, dest[1], dest[2])
 
     # ------------------------------------------------------------------ snapshot
+    def _faces(self, pts) -> list:
+        """How the robot stands at the start and at the end of a drive (the faces of the two stops, as the
+        traffic check takes them; None: along the way)."""
+        if not hasattr(self, "_face_at"):
+            self._face_at = {(round(p.x, 1), round(p.y, 1)): p.face for p in self.lanes.places.values()}
+        return [self._face_at.get((round(x, 1), round(y, 1))) for x, y in (pts[0], pts[-1])]
+
     def snapshot(self, describe, keep_s: float) -> dict:
         now = self.env.now
         robots = []
         for r in self.robots:
-            rec: dict = {"i": r.id, "n": r.name, "st": r.state, "b": round(self.level(r), 1), "o": r.orders}
+            rec: dict = {"i": r.id, "n": r.name, "st": r.state, "b": round(self.level(r), 1), "o": r.orders,
+                         "as": r.asides}
             if r.walk is not None:
                 pts, t0, d = r.walk
-                rec["w"] = {"p": [[round(x, 1), round(y, 1)] for x, y in pts], "t": round(t0, 1), "d": round(d, 1)}
+                rec["w"] = {"p": [[round(x, 1), round(y, 1)] for x, y in pts], "t": round(t0, 1), "d": round(d, 1),
+                            "f": self._faces(pts)}
             else:
                 p = self.lanes.places[r.place]
                 rec["x"], rec["y"] = round(p.x, 1), round(p.y, 1)
                 if p.face is not None:
                     rec["f"] = p.face
-            trail = [{"p": [[round(x, 1), round(y, 1)] for x, y in pts], "t": round(t0, 1), "d": round(d, 1)}
-                     for pts, t0, d in r.trail if t0 + d >= now - keep_s]
+            trail = [{"p": [[round(x, 1), round(y, 1)] for x, y in pts], "t": round(t0, 1), "d": round(d, 1),
+                      "f": self._faces(pts)} for pts, t0, d in r.trail if t0 + d >= now - keep_s]
             if trail:
                 rec["wh"] = trail
             if r.load:

@@ -9,9 +9,16 @@ DOMAIN="${1:?usage: setup-server.sh <domain>}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
 export DEBIAN_FRONTEND=noninteractive
-if ! command -v caddy >/dev/null || ! command -v psql >/dev/null; then
+if ! command -v caddy >/dev/null || ! command -v psql >/dev/null || ! command -v mosquitto >/dev/null; then
   apt-get update -q
-  apt-get install -y -q postgresql python3-venv python3-pip caddy netfilter-persistent iptables-persistent
+  apt-get install -y -q postgresql python3-venv python3-pip caddy netfilter-persistent iptables-persistent mosquitto
+fi
+
+# MQTT broker of the Unified Namespace: only inside the machine (the edge gateway and the MES are local)
+if [ ! -f /etc/mosquitto/conf.d/mes-lab.conf ]; then
+  printf '%s\n' 'listener 1883 127.0.0.1' 'allow_anonymous true' > /etc/mosquitto/conf.d/mes-lab.conf
+  systemctl enable -q mosquitto
+  systemctl restart mosquitto
 fi
 
 # service user and folders
@@ -41,6 +48,10 @@ if ! grep -q '^MES_LOGIN=' /etc/mes-lab/mes.env; then
   sed -i '/^MES_REQUIRE_LOGIN=/d' /etc/mes-lab/mes.env
   echo 'MES_LOGIN=actions' >> /etc/mes-lab/mes.env
 fi
+# phase 5: the UNS (MQTT) and the OPC UA server of the machines, both only on localhost
+grep -q '^MES_MQTT_URL=' /etc/mes-lab/mes.env || echo 'MES_MQTT_URL=mqtt://127.0.0.1:1883' >> /etc/mes-lab/mes.env
+grep -q '^MES_OPCUA_ENDPOINT=' /etc/mes-lab/mes.env || echo 'MES_OPCUA_ENDPOINT=opc.tcp://127.0.0.1:4840/acme/plant1' >> /etc/mes-lab/mes.env
+grep -q '^MES_OPCUA_URL=' /etc/mes-lab/mes.env || echo 'MES_OPCUA_URL=opc.tcp://127.0.0.1:4840/acme/plant1' >> /etc/mes-lab/mes.env
 chown root:mes /etc/mes-lab/mes.env
 chmod 640 /etc/mes-lab/mes.env
 
@@ -69,9 +80,12 @@ done
 netfilter-persistent save >/dev/null
 
 # services and reverse proxy
-install -m 644 "$HERE/mes-lab-mes.service" "$HERE/mes-lab-sim.service" /etc/systemd/system/
+install -m 644 "$HERE/mes-lab-mes.service" "$HERE/mes-lab-sim.service" "$HERE/mes-lab-keepalive.service" /etc/systemd/system/
+install -m 644 "$HERE/keepalive.py" /opt/mes-lab/keepalive.py
 sed "s/__DOMAIN__/${DOMAIN}/" "$HERE/Caddyfile" > /etc/caddy/Caddyfile
 systemctl daemon-reload
-systemctl enable -q mes-lab-mes mes-lab-sim caddy
+systemctl enable -q mes-lab-mes mes-lab-sim mes-lab-keepalive caddy
 systemctl reload-or-restart caddy
+# spare CPU keeps the VM above the idle line of Oracle Always Free (see keepalive.py)
+systemctl restart mes-lab-keepalive
 echo "server ready for ${DOMAIN}"

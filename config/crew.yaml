@@ -7,11 +7,21 @@
 #   home    - where he waits: "desk" (the team desk of the line) or a station type (he stands
 #             at that machine, and the machine has its computer there).
 #   fixed   - never leaves his machine (loader, final inspection, packing, repair bench).
+#   skill   - the qualification the seat needs (crew.skills: some need a certificate that runs out).
 # While a seat's person is on a break, a relief person sits there.
 #
 # crew.shifts: the people that are not tied to a seat, per shift. Operators of a seat belong
-#   to the shift too (the same number of seats every shift); `relief` people cover the breaks.
-#   manager: the production manager works the morning shift; the andon escalates a breakdown to him
+#   to the shift too (the same number of seats every shift); `relief` people cover the seats of the
+#   absent and the breaks (six for the breaks of 33 seats, one more as the reserve for absences; nine
+#   until 0.14.0 stood idle most of the shift). One logistics worker a shift: the trucks take one or
+#   two pallets each, a few minutes of loading (three on the morning shift waited 99 % of the time).
+# crew.rounds: between their calls people go round their machines, as they do in a plant: the operator
+#   of a desk seat (and a relief person between the break rounds) checks a machine of the line every
+#   `operator_min` minutes for `check_min` (the state, the feeders, the trays: a handheld terminal), a
+#   maintenance technician makes an inspection round every `maintenance_min` minutes: `stops` machines,
+#   `inspect_min` each (noise, leaks, filters, lubrication). A call takes them off the round at once.
+#   material: the material handler receives the reels at goods-in and brings them to the SMT lines
+#   (see config/smt_material.yaml); manager: the production manager works the morning shift; the andon escalates a breakdown to him
 #   after an hour (on the other shifts he is called on the phone), and he leads the shift meeting with
 #   the foreman. See crew.andon.
 # crew.andon: a breakdown is the technician's (level 1); after `foreman_min` the foreman comes to the
@@ -30,6 +40,15 @@
 #   the warehouse and at the dock.
 # crew.women: the share of women per job (electronics assembly is mostly women, maintenance mostly
 #   men); a woman's surname has its female form (Nováková, Hrušovská).
+# crew.skills: every operator is qualified for their own seat, many for one or two more, relief people for
+#   the seats they cover and more; `certified` skills need a certificate that runs out (valid_days; a
+#   share of them runs out within days, so the MES has something to warn about). The operator of a seat
+#   that needs one is sent to the eye test or the course before it runs out; a certificate of another
+#   skill lapses and is renewed at the next course, `course_days` later.
+# crew.absence: the chance that a person is off in a shift (sick, on holiday). The foreman covers the
+#   seats of the absent with qualified relief people, the machine seats first; what is left stays empty.
+#   The only material handler or logistics worker of a shift is never missing (a colleague of another
+#   shift stands in): without the material handler the SMT lines run out of reels within hours.
 # crew.lounge: a logistics worker who has stood at the dock with nothing to do for `after_min`
 #   minutes sits down at the table in their corner: cards when a colleague is there, a book alone.
 
@@ -37,21 +56,21 @@ crew:
   walk_speed: 25            # plan units per second (a calm walk through the aisles)
   seats:
     SMT:
-      - {code: FRONT, home: desk, attends: [LOADER, LASER_PCB, PASTE_PRINTER, SPI, PNP_CHIP]}
-      - {code: BACK, home: AOI, attends: [PNP_IC, REFLOW_OVEN, AOI, UNLOADER, DEPANELER]}
+      - {code: FRONT, home: desk, skill: SMT, attends: [LOADER, LASER_PCB, PASTE_PRINTER, SPI, PNP_CHIP]}
+      - {code: BACK, home: AOI, skill: SMT, attends: [PNP_IC, REFLOW_OVEN, AOI, UNLOADER, DEPANELER]}
     FA:
-      - {code: LOADER, home: FA_LOADER, fixed: true, attends: [FA_LOADER]}
-      - {code: INSPECTION, home: FINAL_INSPECTION, fixed: true, attends: [FINAL_INSPECTION]}
-      - {code: FLOATER, home: desk, attends: ["*"]}
+      - {code: LOADER, home: FA_LOADER, fixed: true, skill: FA, attends: [FA_LOADER]}
+      - {code: INSPECTION, home: FINAL_INSPECTION, fixed: true, skill: INSPECTION, attends: [FINAL_INSPECTION]}
+      - {code: FLOATER, home: desk, skill: FA, attends: ["*"]}
     PACK:
-      - {code: SCAN, home: PACK_SCAN, fixed: true, attends: [PACK_SCAN, BOX_LABEL]}
-      - {code: PALLET, home: PALLETIZER, fixed: true, attends: [PALLETIZER]}
+      - {code: SCAN, home: PACK_SCAN, fixed: true, skill: PACK, attends: [PACK_SCAN, BOX_LABEL]}
+      - {code: PALLET, home: PALLETIZER, fixed: true, skill: PACK, attends: [PALLETIZER]}
     REPAIR:
-      - {code: BENCH, home: REPAIR_BENCH, fixed: true, attends: [REPAIR_BENCH], per_station: true}
+      - {code: BENCH, home: REPAIR_BENCH, fixed: true, skill: REPAIR, attends: [REPAIR_BENCH], per_station: true}
   shifts:
-    A: {relief: 6, maintenance: 3, it: 1, foreman: 1, logistics: 3, manager: 1}
-    B: {relief: 6, maintenance: 3, it: 1, foreman: 1, logistics: 2}
-    C: {relief: 6, maintenance: 2, it: 1, foreman: 1, logistics: 1}
+    A: {relief: 7, maintenance: 3, it: 1, foreman: 1, logistics: 1, manager: 1, material: 1}
+    B: {relief: 7, maintenance: 3, it: 1, foreman: 1, logistics: 1, material: 1}
+    C: {relief: 7, maintenance: 2, it: 1, foreman: 1, logistics: 1, material: 1}
   breaks:
     - {name: coffee, kind: coffee, start: 130, length: 10}
     - {name: lunch, kind: lunch, start: 210, length: 30}
@@ -59,7 +78,10 @@ crew:
   esd: {gates: 2, check_s: 6, coat_s: 20}
   women: {OPERATOR: 0.6, MAINTENANCE: 0.12, IT: 0.3, FOREMAN: 0.35, LOGISTICS: 0.2}
   lounge: {after_min: 5}
+  rounds: {operator_min: 12, check_min: 3, maintenance_min: 45, stops: 3, inspect_min: 5}
   andon: {foreman_min: 15, manager_min: 60, meeting_at_min: 10, meeting_min: 5}
+  skills: {certified: [INSPECTION, REPAIR], valid_days: 365, expiring_share: 0.04, course_days: 3}
+  absence: {sick: 0.03, holiday: 0.05}
 
 # Customers send a truck on a timetable (local time). It loads the oldest pallets of the
 # customer's products that wait in the warehouse, up to its capacity, and leaves with a

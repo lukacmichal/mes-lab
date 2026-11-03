@@ -1,0 +1,49 @@
+# The fake ERP: the office system of the plant (customers, demand, production orders, stock).
+#
+# It is a separate system: it never reads the tables of the MES and the MES never reads its tables.
+# The two talk only through messages on the interface (src/mes_lab/erp/bus.py), as a real plant does:
+#   ERP -> MES  PRODUCTION_ORDER  a finished good to make (the MES plans the SMT boards for it itself)
+#   MES -> ERP  ORDER_RECEIVED    the MES took the order over (its work order number)
+#               CONFIRMATION      good and scrap units since the last one, with the goods receipt into stock
+#               DESADV            a truck left: the delivery note (ASN) with its pallets, the goods issue
+#               STOCK_COUNT       the finished goods the warehouse really holds (the ERP corrects its books)
+# Every message has an ID. The receiver remembers the IDs it has processed, so a message sent twice (its
+# answer got lost and the sender tried again) is not booked twice.
+#
+# call_offs: every customer sends a call-off (VDA 4905 / EDIFACT DELFOR) each morning: the quantity it
+#   wants of each of its products for each of the next `days` days. The first `firm_days` are firm (a new
+#   call-off repeats them), the later days are a forecast that changes. The demand of a product is `load` x
+#   what its final assembly lines make at the ideal rate of their bottleneck, +- `spread` from day to day,
+#   in whole KLT boxes.
+# mrp: every `every_min` minutes the ERP compares the demand due within `horizon_days` (today included) and
+#   what is late with its stock and the open production orders, and creates orders for the rest, in the lot
+#   sizes of the product (products.yaml, planning.lot_sizes).
+# interface:
+#   delay_s       a message reaches the other system after this many seconds of plant time (0: at the next tick)
+#   lost_ack      share of deliveries whose answer gets lost: the sender sends the same message again
+#   maintenance   every night the ERP is down for maintenance (local time); messages to it wait and are retried
+#   retry_min     waits before the 1st, 2nd, ... retry of a message that could not be delivered (minutes)
+#   lock_chance   chance per product and day that the ERP locks it for an inventory count for lock_min minutes:
+#                 a goods movement of it is refused and the message goes to the error queue
+#   key_user_at   when the ERP key user goes through the error queue and processes the messages again
+# stock_count_at: the warehouse counts the finished goods and the MES sends the count (local time)
+erp:
+  enabled: true
+  call_offs:
+    at: "06:00"
+    days: 10
+    firm_days: 2
+    load: 0.72
+    spread: 0.15
+  mrp:
+    every_min: 60
+    horizon_days: 2
+  interface:
+    delay_s: 0
+    lost_ack: 0.02
+    maintenance: ["01:30", "02:00"]
+    retry_min: [1, 2, 5, 10, 15, 30]
+    lock_chance: 0.25
+    lock_min: [20, 60]
+    key_user_at: ["08:00", "14:00"]
+  stock_count_at: "05:00"

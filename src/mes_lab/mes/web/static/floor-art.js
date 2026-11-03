@@ -5,7 +5,7 @@ const FloorArt = (() => {
   const P = {};   // current palette (follows the light / dark setting of the page)
 
   const LIGHT = {
-    floor: "#e8ecf1", grid: "#dde3ea", zone: "rgba(30,60,100,.045)", zoneLine: "rgba(30,60,100,.16)",
+    floor: "#e8ecf1", outside: "#c3c9c0", wall: "#6c7889", grid: "#dde3ea", zone: "rgba(30,60,100,.045)", zoneLine: "rgba(30,60,100,.16)",
     body: "#cdd5e0", bodyEdge: "#8d99ab", deck: "#aab5c5", belt: "#6f7b8d", rail: "#97a3b5", stripe: "#8f9bad",
     glass: "rgba(90,140,200,.10)", glassEdge: "rgba(60,100,150,.35)", text: "#2a3547", textDim: "#5b6a80",
     rework: "#c0892a", washer: "#7fb4dd", building: "#d7dee8", buildingEdge: "#9aa7b9", shelf: "#bcc7d6",
@@ -13,7 +13,7 @@ const FloorArt = (() => {
     label: "#1f2a3b", chipText: "#fff",
   };
   const DARK = {
-    floor: "#0e1520", grid: "#141d2b", zone: "rgba(120,160,220,.045)", zoneLine: "rgba(130,170,230,.18)",
+    floor: "#0e1520", outside: "#05080c", wall: "#5a6a84", grid: "#141d2b", zone: "rgba(120,160,220,.045)", zoneLine: "rgba(130,170,230,.18)",
     body: "#2b3649", bodyEdge: "#4a5b77", deck: "#18212f", belt: "#0a0f17", rail: "#51617c", stripe: "#2f4160",
     glass: "rgba(140,190,255,.07)", glassEdge: "rgba(150,190,240,.28)", text: "#c4d0e2", textDim: "#8696ae",
     rework: "#b9852e", washer: "#4f86b4", building: "#1a2433", buildingEdge: "#42536d", shelf: "#2a374c",
@@ -610,6 +610,35 @@ const FloorArt = (() => {
     if (b.kind === "supermarket" && k > 0.5) text(ctx, T("boards in stock · red line = safety stock", "dosky na sklade · červená čiara = poistná zásoba"), b.x + b.w / 2, b.y + b.h - 6, 3.6, P.textDim, "center");
   }
 
+  /* A door in a horizontal wall at height y, the opening from x - w/2 to x + w/2, hinged on the left. It swings
+     open into the room (dir +1: the room is below the wall, -1: above) while somebody walks through it, and
+     closes again behind them; the leaf turns smoothly (its angle is kept per door between the frames). */
+  const doorAngle = new Map();
+  function door(ctx, x, y, w, dir, k) {
+    let near = false;
+    if (typeof Floor !== "undefined") {
+      for (const p of Floor.S.people.values()) {
+        if (p.walking && Math.abs(p.x - x) < w * 0.9 && Math.abs(p.y - y) < w * 0.9) { near = true; break; }
+      }
+    }
+    const key = `${x},${y}`;
+    const now = performance.now();
+    const st = doorAngle.get(key) || { a: 0, t: now };
+    const step = Math.min(1, (now - st.t) / 350);                  // a third of a second to open or close
+    st.a = near ? Math.min(1, st.a + step) : Math.max(0, st.a - step);
+    st.t = now;
+    doorAngle.set(key, st);
+    const hx = x - w / 2, ang = st.a * Math.PI / 2 * dir;
+    const wall = P.buildingEdge;
+    ctx.lineCap = "round";
+    line(ctx, hx, y, hx + Math.cos(ang) * w, y + Math.sin(ang) * w, P.dark ? "#9fb0c8" : "#56637a", 1.1);
+    ctx.lineCap = "butt";
+    if (st.a > 0.05 && k > 1.0) {                                  // the swing of the leaf
+      ctx.strokeStyle = wall; ctx.lineWidth = 0.3; ctx.setLineDash([0.8, 0.8]);
+      ctx.beginPath(); ctx.arc(hx, y, w, Math.min(0, ang), Math.max(0, ang)); ctx.stroke(); ctx.setLineDash([]);
+    }
+  }
+
   /* The repair centre is a room: its door in the north wall, the pass-through racks in that wall (a robot
      puts pieces in from the aisle, the repair people take them out inside), the quarantine cage with its
      hatch, the scrap bin and the benches (drawn as machines). */
@@ -628,10 +657,7 @@ const FloorArt = (() => {
     line(ctx, b.x, b.y, b.x, b.y + b.h, wall, lw);
     line(ctx, b.x + b.w, b.y, b.x + b.w, b.y + b.h, wall, lw);
     line(ctx, b.x, b.y + b.h, b.x + b.w, b.y + b.h, wall, lw);
-    if (k > 0.8) {                                                           // the door leaf, open
-      ctx.strokeStyle = wall; ctx.lineWidth = 0.6;
-      ctx.beginPath(); ctx.arc(b.door[0] - b.door_w / 2, b.y, b.door_w, 0, Math.PI / 2); ctx.stroke();
-    }
+    door(ctx, b.door[0], b.y, b.door_w, 1, k);
     const rs = Math.max(5.5, Math.min(13, 10 / k));
     text(ctx, lang === "sk" ? b.name_sk : b.name, b.x + 10, b.y + b.h - rs * 0.9, rs, P.label, "left", "600");
     // pass-through racks
@@ -668,6 +694,6 @@ const FloorArt = (() => {
     }
   }
 
-  return { P, style, PRODUCTS, sizes, itemSize, fgwCells, rr, fillRR, rect, line, circle, text, fitText, person, has, frac, drawItem, drawRoutes,
+  return { P, style, PRODUCTS, sizes, itemSize, fgwCells, rr, fillRR, rect, line, circle, text, fitText, person, has, frac, drawItem, drawRoutes, door,
     drawLineBelts, drawBuilding, drawRepairCentre, drawCrossings, loadPalette };
 })();

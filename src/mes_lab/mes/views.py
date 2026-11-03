@@ -341,6 +341,72 @@ class Views:
             "defects": [{"code": c, "name": n, "found": int(f)} for c, n, f in defects],
         }
 
+    # ------------------------------------------------------------------ people: qualifications and attendance
+    def people(self, session: Session, trace, crew: dict) -> dict:
+        """The qualification matrix (operators x skills, certificates that run out), who came to this
+        shift and who covers whom, and how many qualified people every skill has per shift."""
+        clock = Clock(session, self.model)
+        start = trace.shift_start(clock.now)
+        soon = clock.now + timedelta(days=30)
+        quals: dict[int, dict] = {}
+        for q in session.scalars(select(db.Qualification)):
+            quals.setdefault(q.employee_id, {})[q.skill] = q
+        att = {a.employee_id: a for a in session.scalars(select(db.Attendance).where(db.Attendance.shift_start == start))}
+        skills = sorted({s for qs in quals.values() for s in qs})
+        people, bench = [], {}
+        for e in session.scalars(select(db.Employee).order_by(db.Employee.shift, db.Employee.id)):
+            qs = quals.get(e.id, {})
+            cells = {}
+            for skill, q in qs.items():
+                until = q.valid_until
+                if q.revoked:                       # taken away on the web: until the next shift, then not
+                    state = "ending" if until is not None and until > clock.now else "revoked"
+                else:
+                    state = "ok" if until is None or until > soon else "soon" if until > clock.now else "expired"
+                cells[skill] = {"state": state, "until": clock.iso(until), **({"note": q.note} if q.revoked else {})}
+                if state not in ("expired", "revoked") and e.role == "OPERATOR":
+                    bench.setdefault(e.shift, {}).setdefault(skill, 0)
+                    bench[e.shift][skill] += 1
+            a = att.get(e.id)
+            people.append({"id": e.id, "name": e.name, "role": e.role, "shift": e.shift, "sex": e.sex, "home": e.home,
+                           "skills": cells, "today": a.status if a and e.shift == clock.shift_code else None,
+                           "seat": a.seat if a else None, "covers": a.covers if a else None})
+        names = {p["id"]: p["name"] for p in people}
+        for p in people:
+            if p["covers"]:
+                p["covers_name"] = names.get(p["covers"])
+        expiring = [{"id": p["id"], "name": p["name"], "shift": p["shift"], "skill": k, "until": c["until"], "state": c["state"]}
+                    for p in people for k, c in p["skills"].items() if c["state"] in ("soon", "expired")]
+        expiring.sort(key=lambda x: x["until"] or "")
+        here = [p for p in people if p["today"]]
+        return {"clock": clock.as_dict(), "shift_start": clock.iso(start), "skills": skills, "people": people,
+                "bench": bench, "expiring": expiring,
+                "today": {"present": sum(1 for p in here if p["today"] == "PRESENT"),
+                          "sick": sum(1 for p in here if p["today"] == "SICK"),
+                          "holiday": sum(1 for p in here if p["today"] == "HOLIDAY"),
+                          "uncovered": crew.get("uncovered") or []}}
+
+    # ------------------------------------------------------------------ testers: the master sample check
+    def verifications(self, session: Session, trace) -> dict:
+        clock = Clock(session, self.model)
+        start = trace.shift_start(clock.now)
+        types = [code for code, t in self.model.station_types.items() if t.verification is not None]
+        rows = []
+        for st in session.scalars(select(db.Station).join(db.StationType, db.Station.station_type_id == db.StationType.id)
+                                  .where(db.StationType.code.in_(types)).order_by(db.Station.code)):
+            last = session.scalar(select(db.StationVerification).where(db.StationVerification.station_id == st.id)
+                                  .order_by(db.StationVerification.at.desc()).limit(1))
+            ok = session.scalar(select(func.count()).select_from(db.StationVerification).where(
+                db.StationVerification.station_id == st.id, db.StationVerification.result == "PASS",
+                db.StationVerification.shift_start == start)) > 0
+            fails = session.scalar(select(func.count()).select_from(db.StationVerification).where(
+                db.StationVerification.station_id == st.id, db.StationVerification.result == "FAIL",
+                db.StationVerification.at >= clock.now - timedelta(hours=24)))
+            rows.append({"station": st.code, "name": st.name, "valid": ok,
+                         "last": {"at": clock.iso(last.at), "result": last.result, "person": last.person} if last else None,
+                         "fails_24h": fails})
+        return {"clock": clock.as_dict(), "shift_start": clock.iso(start), "testers": rows}
+
     # ------------------------------------------------------------------ andon
     def andon(self, session: Session, crew: dict, rule) -> dict:
         clock = Clock(session, self.model)
@@ -375,6 +441,28 @@ class Views:
                 "meeting": bool(crew.get("meeting"))}
 
     # ------------------------------------------------------------------ orders
+    def line_queues(self, session: Session, queued: int = 5) -> dict[str, dict]:
+        """Per job line: the jobs in work and the next ones waiting (for the UNS)."""
+        rows = session.execute(select(db.Line.code, db.Job.status, db.WorkOrder.order_no, db.Material.code,
+                                      db.Job.qty, db.Job.released, db.Job.unit)
+                               .join(db.Line, db.Job.line_id == db.Line.id)
+                               .join(db.WorkOrder, db.Job.work_order_id == db.WorkOrder.id)
+                               .join(db.Material, db.WorkOrder.material_id == db.Material.id)
+                               .where(db.Job.status.in_(("ACTIVE", "QUEUED")))
+                               .order_by(db.Job.id)).all()
+        out = {line.code: {"active": [], "queued": [], "waiting": 0}
+               for line in self.model.lines.values() if line.is_job_line}
+        for line, status, order, material, qty, released, unit in rows:
+            q = out.setdefault(line, {"active": [], "queued": [], "waiting": 0})
+            job = {"order": order, "material": material, "qty": qty, "released": released, "unit": unit}
+            if status == "ACTIVE":
+                q["active"].append(job)
+            else:
+                q["waiting"] += 1
+                if len(q["queued"]) < queued:
+                    q["queued"].append(job)
+        return out
+
     def orders(self, session: Session, status: str | None = None, limit: int = 200) -> dict:
         clock = Clock(session, self.model)
         q = (select(db.WorkOrder).order_by(db.WorkOrder.id.desc()).limit(limit)
@@ -392,6 +480,7 @@ class Views:
                 "material_name": order.material.name, "kind": order.material.kind,
                 "qty": order.qty, "status": order.status, "qty_good": order.qty_good,
                 "qty_scrap": order.qty_scrap, "created_at": clock.iso(order.created_at),
+                "source": order.source, "erp_order_no": order.erp_order_no,
                 "started_at": clock.iso(order.started_at), "completed_at": clock.iso(order.completed_at),
                 "jobs": [{"operation": j.operation.code, "line": j.line.code, "status": j.status,
                           "released": j.released, "qty": j.qty, "good": j.good,

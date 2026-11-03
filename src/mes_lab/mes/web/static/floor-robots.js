@@ -16,10 +16,11 @@ const FloorRobots = (() => {
     unloading: ["handing over", "odovzdáva"],
     to_charger: ["back to its charger", "vracia sa na nabíjačku"],
     waiting: ["waiting for a free stop", "čaká na voľnú zastávku"],
+    aside: ["stepped aside: a robot with the right of way needs its stop", "uhol nabok: jeho zastávku potrebuje robot s prednosťou"],
     yield: ["waiting until the way is free (people or a robot cross it)", "čaká, kým bude cesta voľná (križujú ju ľudia alebo robot)"],
   };
   const LIGHT = { idle: "#2fbf71", charging: "#3ddc84", to_pick: "#4a8fd8", to_drop: "#4a8fd8", to_charger: "#4a8fd8",
-    loading: "#f1a33c", unloading: "#f1a33c", waiting: "#f1a33c", yield: "#f1a33c" };
+    loading: "#f1a33c", unloading: "#f1a33c", waiting: "#f1a33c", yield: "#f1a33c", aside: "#f1a33c" };
 
   /* a place a robot stops at, for people: "FA-01-SCR", "repair centre (in)" */
   function placeName(key) {

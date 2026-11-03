@@ -1,0 +1,69 @@
+# SMT material: the component reels on the feeders of the placement machines, the solder paste of the
+# printers and the moisture-sensitive parts (MSL).
+#
+# parts: every component the SMT lines place. machine: the placer type that places it (PNP_CHIP the
+#   small passives, PNP_IC the ICs and the bigger parts); reel: pieces on a full reel; msl: the moisture
+#   sensitivity level of the part (J-STD-033), none = not sensitive; supplier, per_day: see suppliers.
+#   The bill of the SMT side of every board is in products.yaml (routing.*.components).
+#
+# reels: an operator is called to splice a new reel to the running one when it has `splice_warn_min`
+#   minutes of placing left; the splice itself takes `splice_s` (the machine keeps placing). Before the
+#   splice the operator scans the new reel and the feeder: the MES checks that it is the part the
+#   program needs there (a wrong reel is refused: now and then, `wrong_reel_p`, the operator takes the
+#   reel of the next part). A reel that runs out before the splice stops the machine (REEL_EMPTY).
+#   At a changeover the reels of the old job go back to the rack at the line, partly used ones are taken
+#   first next time (FIFO); a new one comes from the warehouse with the reel ID label the MES gave it.
+#
+# paste: a jar of solder paste comes out of the fridge into the thaw cabinet and must thaw `thaw_h`
+#   hours before it is opened (cold paste draws water: solder balls); on the printer it may be used
+#   `open_h` hours (after that the MES blocks the printer: PASTE_EXPIRED) and it lasts `prints` prints.
+#   Changing the jar takes `change_s`. The operator who takes a thawed jar puts the next one from the
+#   fridge into the cabinet; `early_p`: now and then somebody takes a jar too early (the MES refuses it).
+#
+# receiving: the reels come by truck from the suppliers (their timetable, local time) and are received at
+#   the desk south of the goods-in warehouse: the material handler carries the boxes in (`unload_box_s`),
+#   scans every reel against the delivery note (the MES refuses a part that was not ordered, and a lot on
+#   hold), sticks the reel ID label on and puts it into the reel store (`scan_reel_s`). Now and then a box
+#   holds another part than the note says (`wrong_part_p`).
+#   The racks at the SMT lines keep a spare reel of every part their job uses (kanban): a spare taken from
+#   a rack orders the next one, a new job orders what its rack lacks (urgent). The handler picks the
+#   ordered reels in the store, oldest first (FIFO: the MES refuses a newer one, `fifo_p`), and brings them
+#   round the lines every `milk_run_min` minutes (a milk run), at once when a line waits for a reel.
+# suppliers: the purchasing (ERP) orders `per_day` (a part's planned use, reels a day) x `order_days` when
+#   the stock in the store and on order falls under the use during the lead time plus `safety_days`; the
+#   order comes with the first truck of the supplier after the lead time.
+# msl: the floor life of a moisture-sensitive part out of its dry bag, hours per level. Reels lie open
+#   on the machine and in the rack at the line (the rack is not a dry cabinet); the MES counts the time
+#   and refuses a reel whose floor life ran out (MSL_EXPIRED), and one on a machine is taken off when it
+#   runs out. Such a reel is baked `bake_h` hours (125 °C), then its floor life starts anew.
+
+smt_material:
+  reels: {splice_warn_min: 20, splice_s: 75, wrong_reel_p: 0.015, lot_reels: 24}
+  paste: {name: "SAC305 type 4, no-clean", thaw_h: 4, open_h: 12, prints: 700, change_s: 240,
+          early_p: 0.02, cabinet: 8}
+  msl: {floor_h: {"2a": 672, "3": 168, "4": 72, "5a": 24}, bake_h: 24}
+  receiving: {unload_box_s: 35, box_reels: 8, scan_reel_s: 15, pick_s: 12, drop_s: 8, milk_run_min: 30,
+              wrong_part_p: 0.01, fifo_p: 0.01, order_days: 1, safety_days: 1, start_days: 2}
+  suppliers:
+    OHMWERK:  {name: "Ohmwerk Passive GmbH", country: DE, lead_h: 24, trucks: ["07:30", "13:30"]}
+    MORAVIA:  {name: "Moravia Semi a.s.", country: CZ, lead_h: 48, trucks: ["10:00"]}
+    TISZAKON: {name: "Tiszakon Kft.", country: HU, lead_h: 48, trucks: ["11:30"]}
+  parts:
+    RES-0402-10K:  {name: "Resistor 10 kΩ 1 % 0402", machine: PNP_CHIP, reel: 10000, supplier: OHMWERK, per_day: 31}
+    RES-0402-100R: {name: "Resistor 100 Ω 1 % 0402", machine: PNP_CHIP, reel: 10000, supplier: OHMWERK, per_day: 4}
+    RES-0603-0R:   {name: "Jumper 0 Ω 0603", machine: PNP_CHIP, reel: 5000, supplier: OHMWERK, per_day: 4}
+    CAP-0402-100N: {name: "Capacitor 100 nF X7R 0402", machine: PNP_CHIP, reel: 10000, supplier: OHMWERK, per_day: 41}
+    CAP-0603-1U:   {name: "Capacitor 1 µF X7R 0603", machine: PNP_CHIP, reel: 4000, supplier: OHMWERK, per_day: 10}
+    CAP-0805-10U:  {name: "Capacitor 10 µF X7R 0805", machine: PNP_CHIP, reel: 3000, supplier: OHMWERK, per_day: 14}
+    DIO-SOD123:    {name: "TVS diode SOD-123", machine: PNP_CHIP, reel: 3000, supplier: OHMWERK, per_day: 9}
+    TRA-SOT23:     {name: "NPN transistor SOT-23", machine: PNP_CHIP, reel: 3000, supplier: OHMWERK, per_day: 16}
+    LED-0603-GRN:  {name: "LED green 0603", machine: PNP_CHIP, reel: 4000, supplier: OHMWERK, per_day: 3.5}
+    IND-1210-10U:  {name: "Inductor 10 µH 1210", machine: PNP_IC, reel: 2000, supplier: OHMWERK, per_day: 7}
+    IC-LDO-SOT223: {name: "LDO regulator 5 V SOT-223", machine: PNP_IC, reel: 2500, msl: "2a", supplier: MORAVIA, per_day: 5}
+    IC-CAN-SO8:    {name: "CAN transceiver SO-8", machine: PNP_IC, reel: 2500, msl: "2a", supplier: MORAVIA, per_day: 6}
+    MOS-DPAK:      {name: "MOSFET 60 V DPAK", machine: PNP_IC, reel: 2500, msl: "3", supplier: MORAVIA, per_day: 15}
+    IC-MCU-LQFP64: {name: "Microcontroller 32-bit LQFP-64", machine: PNP_IC, reel: 1000, msl: "3", supplier: MORAVIA, per_day: 10.5}
+    IC-LED-QFN32:  {name: "LED driver IC QFN-32", machine: PNP_IC, reel: 3000, msl: "3", supplier: MORAVIA, per_day: 1.5}
+    IC-AFE-TQFP64: {name: "Battery monitor AFE TQFP-64", machine: PNP_IC, reel: 1000, msl: "3", supplier: MORAVIA, per_day: 3}
+    IC-US-QFN24:   {name: "Ultrasonic sensor driver QFN-24", machine: PNP_IC, reel: 3000, msl: "5a", supplier: MORAVIA, per_day: 2.5}
+    CON-SMD-6P:    {name: "Board connector 6-pin SMD", machine: PNP_IC, reel: 1500, supplier: TISZAKON, per_day: 6.5}

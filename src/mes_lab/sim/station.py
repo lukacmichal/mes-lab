@@ -20,7 +20,7 @@ import simpy
 from mes_lab.model.schema import StationKind, StationType
 from mes_lab.model.schema import Station as StationSpec
 
-from .core import TRANSFER_S, Item, Job, State, lognormal
+from .core import BELT_SPEED, OVEN_PROGRAM_S, TRANSFER_S, Item, Job, State, lognormal
 from .trace import Decision, MesUnavailable
 
 if TYPE_CHECKING:
@@ -32,6 +32,9 @@ Found = list[tuple[Item, list[str]]]  # pieces with the defect codes found on th
 
 MES_RETRY_S = 60.0       # an interlocked station retries an unanswered check-in after this,
 MES_RETRY_MAX_S = 900.0  # doubling the wait each time up to this, so a sick MES is not flooded
+
+
+MATERIAL_TYPES = frozenset({"PASTE_PRINTER", "PNP_CHIP", "PNP_IC"})   # SMT material, see material.py
 
 
 def retry_wait(attempt: int) -> float:
@@ -67,10 +70,17 @@ class Station:
         self.work_left = 0.0                     # what was left when `work_t` was written
         self.work_t = 0.0
         self.work_run = False                    # False while the machine is broken down
+        self.changeover: tuple[float, float] | None = None   # (started, length) of a changeover going on
         self.container: Item | None = None       # packing: the box or pallet being filled
         self.last_result: str | None = None      # PASS / FAIL of the last piece it reported
+        self.last_values: dict[str, float] = {}  # the process values of the last piece (OPC UA, UNS)
+        self.last_cycle_s: float | None = None   # how long the last piece took here
         self.call = None                         # open call for a technician (see crew.py)
         self.attendance = None                   # an operator comes to the machine
+        self.drift_s = 0.0                       # operating seconds since the process was last set right (SPC)
+        self.adjust: int | None = None           # an SPC alarm of the MES: adjust the machine (command id)
+        self.verified_for: float | None = None   # testers: the start of the shift its master sample check is for
+        self.golden = False                      # the master sample is in the tester right now
         plant.edge.register(self)
 
     # ------------------------------------------------------------------ state
@@ -110,7 +120,7 @@ class Station:
         A station that rejected the piece logs its first value out of the window."""
         values = {}
         for i, (name, spec) in enumerate(self.type.measurements.items()):
-            value = self.rng.gauss(spec.mean, spec.sd)
+            value = self.rng.gauss(spec.mean + spec.drift_per_h * self.drift_s / 3600, spec.sd)
             if failed and i == 0:
                 value = spec.usl + spec.sd * self.rng.uniform(0.5, 3) if self.rng.random() < 0.5 \
                     else spec.lsl - spec.sd * self.rng.uniform(0.5, 3)
@@ -140,21 +150,37 @@ class Station:
         else a product changeover. Both need new stencil, programs and parts."""
         return "SIDE_CHANGE" if self.setup and self.setup[0] == job.setup_key[0] else "CHANGEOVER"
 
+    def _changeover_from(self, length: float):
+        """What starts the clock of a changeover: the person is at the machine."""
+        def start() -> None:
+            self.changeover = (self.env.now, length)
+        return start
+
     def prepare(self, job: Job | None) -> Proc:
         """Changeover, planned maintenance and minor stops before a cycle."""
         if job is not None and self.line.is_job:
             self.last_job = job
             if job.setup_key != self.setup:
+                first = self.setup is None
+                if self.type.code == "LOADER" and self.line.spec.area_kind.value == "SMT":
+                    self.plant.material.job_started(self.line.code, job)   # the rack orders the reels of the job
                 if self.setup is not None and self.type.changeover_min > 0:
+                    # the operator of the seat comes and changes the machine over (stencil, programs, nozzles)
                     self.set_state(State.CHANGEOVER, self.changeover_reason(job))
-                    yield self.env.timeout(self.type.changeover_min * 60 * self.rng.uniform(0.8, 1.4))
+                    length = self.type.changeover_min * 60 * self.rng.uniform(0.8, 1.4)
+                    yield from self.plant.crew.attend(self, length, "changeover", on_start=self._changeover_from(length),
+                                                      act="setup")
+                    self.changeover = None
                 self.setup = job.setup_key
+                if self.type.code in MATERIAL_TYPES:
+                    yield from self.plant.material.setup(self, job, first)  # the reels of the new job, scanned
         pm = self.type.pm
         if pm and self.op_since_pm >= pm.interval_h * 3600:
             self.set_state(State.MAINTENANCE, "PLANNED_MAINTENANCE")
             yield from self.plant.crew.service(self, "PLANNED_MAINTENANCE",
                                                pm.duration_min * 60 * self.rng.uniform(0.9, 1.3), "pm")
             self.op_since_pm = 0.0
+            self.drift_s = 0.0
         ms = self.type.microstop
         if ms.p and self.rng.random() < ms.p:
             self.set_state(State.MINOR_STOP, "MICROSTOP")
@@ -185,6 +211,7 @@ class Station:
                     yield self.env.timeout(self.ttf)
                 remaining -= self.ttf
                 self.op_since_pm += self.ttf
+                self.drift_s += self.ttf
                 self._progress(remaining, False)
                 yield from self.breakdown()
                 self.set_state(State.RUNNING)
@@ -193,6 +220,7 @@ class Station:
                 yield self.env.timeout(remaining)
                 self.ttf -= remaining
                 self.op_since_pm += remaining
+                self.drift_s += remaining
                 remaining = 0.0
         self._progress(0.0, False)
 
@@ -212,6 +240,7 @@ class Station:
         self.set_state(State.DOWN, reason)
         yield from self.plant.crew.service(self, reason, self._sample_repair())
         self.ttf = self._sample_ttf()
+        self.drift_s = 0.0                       # the repair sets the process right as well
 
     def introduce_defects(self, item: Item) -> Found:
         """Possibly add defects to each piece; return what the station itself caught."""
@@ -236,16 +265,22 @@ class Station:
         """Find latent defects; return the defective pieces and the number of false calls."""
         rng = self.rng
         detects = self.type.detects
+        storm = self.plant.fault_on("AOI_STORM", self.code)      # a training scenario: calls everything
+        rate = storm["false_calls"] if storm else self.type.false_call_rate
         found: Found = []
         false_calls = 0
         for piece in item.pieces():
             codes = [c for c in piece.defects if rng.random() < detects.get(c, 0.0)]
+            if codes and storm:                  # the operator, flooded with calls, waves some real ones through
+                kept = [c for c in codes if rng.random() >= storm["miss"]]
+                false_calls += len(codes) > len(kept)
+                codes = kept
             if codes:
                 for code in codes:
                     piece.defects.remove(code)
                 piece.found.extend(codes)
                 found.append((piece, codes))
-            elif rng.random() < self.type.false_call_rate:
+            elif rng.random() < rate:
                 false_calls += 1
         return found, false_calls
 
@@ -262,17 +297,42 @@ class Station:
                 if len(inbox.items) >= inbox.capacity:
                     self.set_state(State.BLOCKED)
                 yield inbox.put(out)
+                out.belt = (self.env.now, self.env.now + self.belt_s)   # it rides the conveyor to the next cell
             self.out_items.remove(out)
         self.phase = "idle"
         if self.line.exits_after(self.cell, source) or source not in outputs:
             self.line.leave(source)
 
+    @property
+    def belt_s(self) -> float:
+        """How long a piece rides from this machine to the next cell: from its exit along the conveyor
+        (down to the main conveyor and up again in a double cell) to the entrance of the next machine."""
+        lay = self.plant.layout
+        me = lay.stations.get(self.code)
+        info = lay.lines.get(self.line.code)
+        if me is None or info is None or self.cell.index + 1 >= len(info["cells"]):
+            return 0.0
+        nxt = lay.stations[info["cells"][self.cell.index + 1]["stations"][0]]
+        run = (nxt["x"] + 0.22 * nxt["w"]) - (me["x"] + 0.78 * me["w"])
+        side = abs(me["cy"] - info["spine"]) + abs(nxt["cy"] - info["spine"])
+        return max(0.0, run + side) / BELT_SPEED
+
+    def arrive(self, item: Item) -> Proc:
+        """The piece is taken from the conveyor: while it still rides there, the machine waits for it at
+        its entrance. (`item.belt` stays: the live view shows the ride a little later, see floor.py.)"""
+        if item.belt is not None and item.belt[1] > self.env.now:
+            self.item = item
+            self.phase = "in"
+            yield self.env.timeout(item.belt[1] - self.env.now)
+
     def trace(self, item: Item, job: Job | None, start: float, result: str,
               found: Found = (), action: str | None = None) -> None:
         self.last_result = result
-        self.plant.trace.record(self, item, job, start, self.env.now, result, found,
-                                self.measure(result == "FAIL" and self.type.kind != "inspection"),
-                                action)
+        self.last_cycle_s = round(self.env.now - start, 2)
+        values = self.measure(result == "FAIL" and self.type.kind != "inspection")
+        if values:
+            self.last_values = values
+        self.plant.trace.record(self, item, job, start, self.env.now, result, found, values, action)
 
     # ------------------------------------------------------------------ main loop
     def run(self) -> Proc:
@@ -281,6 +341,7 @@ class Station:
             if not inbox.items:
                 self.idle()
             item = yield inbox.get()
+            yield from self.arrive(item)
             self.item = item
             if self.performs(item):
                 outputs = yield from self.handle(item)
@@ -295,19 +356,39 @@ class Station:
         job = item.job if self.line.is_job else None
         decision: Decision | None = None
         self.phase = "in"
+        if self.adjust is not None:
+            yield from self.adjust_process()
         if self.type.interlock and (item.serial or self.type.code == "LASER_PCB"):
-            decision = yield from self.gate(item, job)
+            while True:
+                yield from self.ensure_verified()
+                decision = yield from self.gate(item, job)
+                if decision.ok or decision.reason not in ("VERIFICATION_DUE", "NOT_QUALIFIED", "PASTE_EXPIRED"):
+                    break
+                if decision.reason == "VERIFICATION_DUE":
+                    self.verified_for = None                     # the MES wants a check first
+                elif decision.reason == "PASTE_EXPIRED":         # the paste is open too long: a new jar
+                    yield from self.plant.material.change_paste(self, "EXPIRED")
+                else:                                            # nobody qualified at the machine: wait for one
+                    self.set_state(State.STARVED, "NO_OPERATOR")
+                    yield self.env.timeout(60)
             if not decision.ok:
                 self.plant.quarantine(item, self, decision)
                 return []
             self._take_serials(item, decision)
+        if self.type.manual:
+            yield from self.plant.crew.staffed(self)              # a machine worked by hand needs its person
         if self.type.kind == StationKind.PACK and self.type.container == "klt" and decision is not None:
             box = decision.data.get("container")
             if box and box not in self.plant.open_containers:
                 yield from self.plant.supply.take(self)              # a new box from the stack of empty ones
         yield from self.prepare(job)
+        material = self.type.code in MATERIAL_TYPES
+        if material:
+            yield from self.plant.material.ready(self, job)          # reels with enough parts, paste on the stencil
         start = self.env.now
         yield from self.work(self.cycle_time(job))
+        if material:
+            self.plant.material.used(self, job, item)
         kind = self.type.kind
         job_id = job.id if job else None
         pieces = item.pieces()
@@ -350,6 +431,46 @@ class Station:
         item.done.add(self.type.code)
         self.trace(item, job, start, "PASS")
         return [item]
+
+    # ------------------------------------------------------------------ SPC and the master sample
+    def adjust_process(self) -> Proc:
+        """An SPC alarm of the MES: the machine stops, a technician (with the measuring instruments)
+        corrects the process, the plant confirms the command."""
+        command, self.adjust = self.adjust, None
+        self.set_state(State.MAINTENANCE, "SPC_ADJUST")
+        yield from self.plant.crew.service(self, "SPC_ADJUST", self.rng.uniform(10, 20) * 60, "pm")
+        self.drift_s = 0.0
+        self.plant.acks.append(command)
+
+    def ensure_verified(self) -> Proc:
+        """Testers: before the first unit of a shift the operator checks the tester with its master
+        sample (a known good unit); the result goes to the MES. A failed check calls maintenance (the
+        fixture or the probes), then the check is done again."""
+        spec = self.type.verification
+        if spec is None:
+            return
+        _, start, _ = self.plant.crew.shift_window(self.env.now)
+        if self.verified_for == start:
+            return
+        while True:
+            self.set_state(State.MAINTENANCE, "MASTER_SAMPLE")
+            self.golden = True
+            began = self.env.now
+            who: list[str] = []
+
+            def arrived() -> None:                       # the operator who does the check
+                person = self.attendance.person if self.attendance else None
+                if person is not None:
+                    who.append(person.name)
+            yield from self.plant.crew.attend(self, spec.duration_s, "golden", on_start=arrived)
+            self.golden = False
+            ok = self.rng.random() >= spec.fail_p
+            self.plant.trace.verification(self, "PASS" if ok else "FAIL", began, who[0] if who else None)
+            if ok:
+                self.verified_for = start
+                return
+            self.set_state(State.DOWN, "FIXTURE_FAULT")
+            yield from self.plant.crew.service(self, "FIXTURE_FAULT", self._sample_repair())
 
     @staticmethod
     def _take_serials(item: Item, decision: Decision) -> None:
@@ -430,7 +551,14 @@ class LoaderStation(Station):
         # the MES checks the board and starts the product's life (serial number)
         self.item = board
         self.phase = "in"
-        decision = yield from self.gate(board, job, consume=board)
+        while True:
+            if self.type.manual:
+                yield from plant.crew.staffed(self)            # loading by hand: the loader needs its person
+            decision = yield from self.gate(board, job, consume=board)
+            if decision.reason != "NOT_QUALIFIED":
+                break
+            self.set_state(State.STARVED, "NO_OPERATOR")       # nobody qualified at the loader: wait for one
+            yield self.env.timeout(60)
         if not decision.ok:
             self.item = None
             self.phase = "idle"
@@ -488,14 +616,21 @@ class OvenStation(Station):
             self.belt_go.succeed()
             self.belt_go = self.env.event()
 
-    def _hold(self, state: State, reason: str | None, duration: float) -> Proc:
+    def _hold(self, state: State, reason: str | None, duration: float, kind: str = "repair") -> Proc:
         self.override = (state, reason)
         stops = state in (State.DOWN, State.MAINTENANCE)
         if stops:
             self._stop_belt()
         self.refresh()
         if stops:
-            yield from self.plant.crew.service(self, reason or "PLC_FAULT", duration)
+            yield from self.plant.crew.service(self, reason or "PLC_FAULT", duration, kind)
+        elif state is State.CHANGEOVER:
+            # the operator loads the profile of the new job, then the oven settles at its temperatures
+            program = min(OVEN_PROGRAM_S, duration)
+            yield from self.plant.crew.attend(self, program, "changeover", on_start=self._changeover_from(duration),
+                                              act="setup")
+            yield self.env.timeout(duration - program)
+            self.changeover = None
         else:
             yield self.env.timeout(duration)
         self.override = None
@@ -520,6 +655,7 @@ class OvenStation(Station):
             if not inbox.items:
                 self.refresh()
             item = yield inbox.get()
+            yield from self.arrive(item)
             self.item = item
             self.phase = "in"
             performs = self.performs(item)
@@ -533,10 +669,24 @@ class OvenStation(Station):
                         yield from self._hold(State.CHANGEOVER, self.changeover_reason(job),
                                               self.type.changeover_min * 60 * self.rng.uniform(0.8, 1.4))
                     self.setup = job.setup_key
-            if performs and self.ttf <= 0:
+            fault = self.plant.fault_on("OVEN_FAILURE", self.code) if performs and self.inside_items else None
+            if performs and (self.ttf <= 0 or fault):
                 reason = self.rng.choice(self.type.failures) if self.type.failures else "PLC_FAULT"
+                if fault:                        # a training scenario: a heater zone fails with panels inside
+                    reason = fault["reason"]
+                    for inside, _ in self.inside_items:
+                        for piece in inside.pieces():
+                            if self.rng.random() < fault["rate"]:
+                                piece.defects.append(fault["defect"])
+                    self.plant.end_fault(f"OVEN_FAILURE:{self.code}", "the oven broke down")
                 yield from self._hold(State.DOWN, reason, self._sample_repair())
                 self.ttf = self._sample_ttf()
+                self.drift_s = 0.0
+            if performs and self.adjust is not None:                 # an SPC alarm: the profile is corrected
+                command, self.adjust = self.adjust, None
+                yield from self._hold(State.MAINTENANCE, "SPC_ADJUST", self.rng.uniform(10, 20) * 60, "pm")
+                self.drift_s = 0.0
+                self.plant.acks.append(command)
             pitch = self.cycle_time(job) if performs else TRANSFER_S
             wait = self.last_entry + pitch - self.env.now
             if wait > 0:
@@ -546,6 +696,7 @@ class OvenStation(Station):
             self.last_entry = self.env.now
             if performs:
                 self.ttf -= pitch
+                self.drift_s += pitch
             self.inside += 1
             self.inside_items.append((item, self.belt_time()))
             self.item = None

@@ -55,10 +55,10 @@ class ScenarioStore:
         except OSError as exc:
             log.warning("cannot write %s: %s", self.path, exc)
 
-    def set(self, knobs: dict | None, by: str) -> dict:
+    def set(self, knobs: dict | None, by: str, base: dict | None = None) -> dict:
         """Ask for a plant: the knobs of a scenario (cleaned to their limits), or None for the plant as
         configured. Knobs equal to the configured plant are stored as None."""
-        base = tuning.defaults()
+        base = base or tuning.defaults()
         clean = tuning.clean(knobs, base) if knobs else None
         if clean == base:
             clean = None
@@ -71,6 +71,15 @@ class ScenarioStore:
                 self._save()
                 log.info("live plant scenario %s by %s: %s", self.version, by, clean or "as configured")
             return self.state()
+
+    def bump(self, by: str) -> None:
+        """The plant must build itself anew with the same knobs (new settings took effect)."""
+        with self._lock:
+            self.version += 1
+            self.by = by
+            self.at = datetime.now(UTC).isoformat(timespec="seconds")
+            self._save()
+            log.info("live plant to build anew (%s): version %s", by, self.version)
 
     def state(self) -> dict:
         return {"knobs": self.knobs, "version": self.version, "by": self.by, "at": self.at}

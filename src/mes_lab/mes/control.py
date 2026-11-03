@@ -1,5 +1,6 @@
-"""Production control: simulation runs, dispatching jobs to lines and the demo
-planner that creates work orders until the fake ERP exists (phase 4)."""
+"""Production control: simulation runs, dispatching jobs to lines and the planner of the MES: the SMT
+boards for the supermarket always, the final assembly orders only when the fake ERP is off (config/erp.yaml;
+with it on they come from the ERP, mes_lab.mes.erp_link)."""
 
 from __future__ import annotations
 
@@ -7,10 +8,11 @@ import logging
 import random
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import exists, func, select, update
+from sqlalchemy import exists, func, select, text, update
 from sqlalchemy.orm import Session
 
 from mes_lab import planning
+from mes_lab.erp import system as erp_system
 from mes_lab.model.schema import AreaKind, PlantModel
 
 from . import models as db
@@ -19,6 +21,7 @@ from .trace import Trace
 log = logging.getLogger("mes_lab.control")
 
 OPEN = ("RELEASED", "IN_PROGRESS")
+PLAN_AHEAD_JOBS = 2          # final assembly jobs per line whose boards SMT makes now (the running one and the next)
 
 
 # ------------------------------------------------------------------ runs
@@ -26,16 +29,26 @@ OPEN = ("RELEASED", "IN_PROGRESS")
 def register_run(session: Session, run_id: str, seed: int, speed: float | None,
                  now: datetime | None = None, trace: Trace | None = None,
                  initial_stock: dict[str, list[str]] | None = None,
-                 lines: list[str] | None = None, knobs: dict | None = None) -> db.SimRun:
+                 lines: list[str] | None = None, knobs: dict | None = None,
+                 plant_start: datetime | None = None, erp_link=None) -> db.SimRun:
     """A new simulation run starts with an empty shop floor: unfinished work orders
     go back to the queue, units in process are lost, the opening stock of boards
     is registered, and plant time continues after the previous run. A run of a tuning
-    scenario may have fewer lines: the work of a line it does not have moves to one it has."""
+    scenario may have fewer lines: the work of a line it does not have moves to one it has.
+    `plant_start`: the plant asks to start at this time (midnight of the real day, see
+    sim.runner.new_day); when it is earlier than what the MES has, what lies after it is undone."""
     now = (now or datetime.now(UTC)).replace(microsecond=0)
     last = session.scalar(select(func.max(db.SimRun.last_plant_time)))
-    start = now if last is None or last < now else (last + timedelta(seconds=1)).replace(microsecond=0)
+    if plant_start is not None:
+        start = plant_start.astimezone(UTC).replace(microsecond=0)
+        if last is not None and last >= start:
+            rewind(session, start)
+    else:
+        start = now if last is None or last < now else (last + timedelta(seconds=1)).replace(microsecond=0)
 
     unfinished = session.scalars(select(db.WorkOrder).where(db.WorkOrder.status.in_(OPEN))).all()
+    if erp_link is not None:
+        erp_link.reverse(session, unfinished, start)       # they start again from nothing: the ERP is told
     for order in unfinished:
         order.status = "RELEASED"
         order.started_at = None
@@ -60,6 +73,10 @@ def register_run(session: Session, run_id: str, seed: int, speed: float | None,
     session.flush()
     if trace is not None:
         trace.start_run(session, run_id, initial_stock or {}, start)
+        if trace.material is not None:
+            trace.material.new_run(session, start)            # the reels and jars of the last run are gone
+    if erp_link is not None:
+        erp_link.stock_count(session, start, run, force=True)    # the warehouse is empty: the ERP corrects its books
     session.commit()
     return run
 
@@ -89,6 +106,65 @@ def _move_work(session: Session, orders: list[db.WorkOrder], have: set[str]) -> 
         moved += 1
     if moved:
         log.info("%d work orders moved to the lines this plant has", moved)
+
+
+# what lies at or after the start of a rewound day, table by table (children before their parents)
+REWIND = [
+    *erp_system.Erp.REWIND,              # the ERP and the interface, then what the MES remembers of what it told it
+    """UPDATE work_order w SET
+           erp_good = COALESCE((SELECT sum(c.good) FROM erp_confirmation c JOIN erp_production_order o
+                                    ON o.id = c.order_id WHERE o.number = w.erp_order_no), 0),
+           erp_scrap = COALESCE((SELECT sum(c.scrap) FROM erp_confirmation c JOIN erp_production_order o
+                                    ON o.id = c.order_id WHERE o.number = w.erp_order_no), 0),
+           erp_final = EXISTS (SELECT 1 FROM erp_confirmation c JOIN erp_production_order o
+                                  ON o.id = c.order_id WHERE o.number = w.erp_order_no AND c.final)
+     WHERE w.erp_order_no IS NOT NULL""",
+    """UPDATE shipment s SET erp_sent = false
+     WHERE s.erp_sent AND s.departed_at < :t AND s.departed_at >= :t - interval '2 days'
+       AND NOT EXISTS (SELECT 1 FROM integration_message m WHERE m.kind = 'DESADV' AND m.ref = s.asn_no)""",
+    "DELETE FROM spc_alarm WHERE raised_at >= :t OR hold_id IN (SELECT id FROM hold WHERE created_at >= :t)",
+    "DELETE FROM hold WHERE created_at >= :t",                         # (its units: ON DELETE CASCADE)
+    "DELETE FROM operation_record WHERE ended_at >= :t",
+    "DELETE FROM defect WHERE found_at >= :t",
+    "DELETE FROM unit_link WHERE created_at >= :t",
+    "DELETE FROM label WHERE printed_at >= :t",
+    "DELETE FROM unit WHERE created_at >= :t",                         # (records, defects, links: CASCADE)
+    "UPDATE unit SET shipment_id = NULL WHERE shipment_id IN (SELECT id FROM shipment WHERE departed_at >= :t)",
+    "DELETE FROM shipment WHERE departed_at >= :t",
+    "UPDATE unit SET work_order_id = NULL WHERE work_order_id IN (SELECT id FROM work_order WHERE created_at >= :t)",
+    "DELETE FROM job WHERE work_order_id IN (SELECT id FROM work_order WHERE created_at >= :t)",
+    "DELETE FROM work_order WHERE created_at >= :t",
+    "DELETE FROM station_state_time WHERE hour >= :t",
+    "DELETE FROM production_count WHERE hour >= :t",
+    "DELETE FROM defect_count WHERE hour >= :t",
+    "DELETE FROM downtime_event WHERE start_at >= :t",
+    "UPDATE downtime_event SET end_at = NULL WHERE end_at >= :t",
+    "DELETE FROM attendance WHERE shift_start >= :t",
+    "DELETE FROM station_verification WHERE at >= :t",
+    "DELETE FROM material_scan WHERE at >= :t",
+    "DELETE FROM feeder_load WHERE started_at >= :t",
+    "DELETE FROM paste_jar WHERE out_at >= :t",
+    "DELETE FROM reel WHERE received_at >= :t",                        # (feeder loads: CASCADE)
+    "DELETE FROM delivery WHERE arrived_at >= :t",
+    "DELETE FROM sim_command WHERE created_at >= :t",
+    "UPDATE training_run SET status = 'ABORTED', finished_at = :t WHERE status = 'RUNNING' AND started_at >= :t",
+    "DELETE FROM plant_live",
+    "UPDATE sim_run SET plant_start = LEAST(plant_start, :before), last_plant_time = LEAST(last_plant_time, :before)",
+]
+
+
+def rewind(session: Session, start: datetime) -> dict[str, int]:
+    """The plant goes back to `start` (it was ahead of the real day after a jump or a faster speed): what the
+    MES holds from that time on did not happen, so it is deleted. Otherwise the same hour would be counted
+    twice, once for each time the plant lived it. Master data, people and users stay."""
+    done: dict[str, int] = {}
+    for sql in REWIND:
+        n = session.execute(text(sql), {"t": start, "before": start - timedelta(seconds=1)}).rowcount or 0
+        if n:
+            done[sql.split()[2] if sql.startswith("DELETE") else sql.split()[1]] = n
+    session.flush()
+    log.info("plant time back to %s: %s", start.isoformat(), done)
+    return done
 
 
 def run_lines(session: Session, run: db.SimRun | None) -> set[str] | None:
@@ -153,7 +229,7 @@ class Planner:
     def ensure_work(self, session: Session, line: db.Line, plant_time: datetime,
                     run: db.SimRun) -> None:
         spec = self.model.lines[line.code]
-        if spec.area_kind == AreaKind.FA:
+        if spec.area_kind == AreaKind.FA and not self.model.erp.enabled:
             queued = session.scalar(select(func.count()).select_from(db.Job).where(
                 db.Job.line_id == line.id, db.Job.status == "QUEUED"))
             if not queued:
@@ -204,6 +280,18 @@ class Planner:
             .where(db.WorkOrder.status.in_(OPEN))
         ).all()
 
+        # the boards final assembly needs soon: the job each line works on and the next one in its queue. The
+        # ERP releases days of orders at once; planning SMT for all of them would put the boards of one product
+        # behind those of another for a day, and the line making it would wait.
+        soon: set[int] = set()
+        taken: dict[str, int] = {}
+        for job, order, mat_code, op_code, line_code in sorted(open_jobs, key=lambda r: r[0].id):
+            if self.model.materials[mat_code].kind == "FG" and job.status in ("QUEUED", "ACTIVE") and job.released < job.qty:
+                if taken.get(line_code, 0) < PLAN_AHEAD_JOBS:
+                    soon.add(job.id)
+                    taken[line_code] = taken.get(line_code, 0) + 1
+
+        wanted: list[tuple[float, object, list[int]]] = []
         for pcba in self.model.pcbas():
             stock = stock_now.get(pcba.code, pcba.planning.initial_stock)
             supply = demand = 0
@@ -211,10 +299,22 @@ class Planner:
                 mat = self.model.materials[mat_code]
                 if mat_code == pcba.code and job.seq == len(mat.routing):
                     supply += order.qty - (job.good + job.scrap)
-                elif mat.pcba == pcba.code:
+                elif mat.pcba == pcba.code and job.id in soon:
                     demand += job.qty - job.released
             lots = planning.smt_lots(stock, supply, demand, pcba.planning, pcba.boards_per_panel)
-            for lot in lots:
+            if lots:
+                cover = (stock + supply - demand) / max(pcba.planning.safety_stock, 1)
+                wanted.append((cover, pcba, lots))
+
+        # one lot of each board in turn, the board with the least cover first: a burst of orders from the ERP
+        # must not queue all the boards of one product in front of the others
+        wanted.sort(key=lambda w: (w[0], w[1].code))
+        rounds = max((len(w[2]) for w in wanted), default=0)
+        for i in range(rounds):
+            for _, pcba, lots in wanted:
+                if i >= len(lots):
+                    continue
+                lot = lots[i]
                 workload = {code: 0.0 for code in smt_lines}
                 last: dict[str, str | None] = {code: None for code in smt_lines}
                 for job, order, mat_code, op_code, line_code in sorted(open_jobs, key=lambda r: r[0].id):

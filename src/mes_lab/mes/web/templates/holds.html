@@ -18,9 +18,9 @@
   </div>
 {% endcall %}
 
-{% if not can_act %}
+{% if not can('quality') %}
 <div class="notice" style="margin-bottom:16px">
-  <a href="/login?next=/holds">Sign in</a> to create or release holds. Without signing in you can look around.
+  {% if can_act %}Your role may not create or release holds (quality, a shift supervisor or an administrator may).{% else %}<a href="/login?next=/holds">Sign in</a> to create or release holds. Without signing in you can look around.{% endif %}
 </div>
 {% else %}
 <div class="panel" style="margin-bottom:16px">
@@ -32,6 +32,7 @@
           <option value="SERIAL">Serial number</option>
           <option value="WORK_ORDER">Work order</option>
           <option value="STATION_WINDOW">Station and time window</option>
+          <option value="MATERIAL_LOT">Supplier lot (components, paste)</option>
         </select>
       </label>
       <label class="field"><span id="target-label">Serial number</span>

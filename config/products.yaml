@@ -18,11 +18,16 @@
 #   kit (FG): the parts final assembly adds to one unit; they come in bins of per_bin sets, which the
 #             robots bring from the goods-in warehouse to the rack at the loader (two-bin kanban)
 #   packing.klt_mm: the KLT box; packing.pallet_mm / pallet_type: the pallet (EUR 1200 x 800, CP1 1200 x 1000)
+#   components (SMT pass): the parts placed on one board in this pass, pieces per board; the placer that
+#   places each part and its reel are in config/smt_material.yaml
 
+# customers: city and dock (where they unload our trucks) and supplier_no (our number in their books) go on
+#   the labels; FG customer_part (their part number) and change_level (the drawing index they released) too.
+#   packing.unit_g and klt_g (the empty box) give the weights on the labels.
 customers:
-  - {code: KRAFTWAGEN, name: Kraftwagen AG, country: DE}
-  - {code: NORDAUTO,   name: Nordauto AB, country: SE}
-  - {code: VOLTARO,    name: Voltaro Mobility s.r.o., country: CZ}
+  - {code: KRAFTWAGEN, name: Kraftwagen AG, country: DE, city: "Kronsberg, DE", supplier_no: "70412", dock: "Plant 3 · gate 14 · E-line"}
+  - {code: NORDAUTO,   name: Nordauto AB, country: SE, city: "Lindvik, SE", supplier_no: "S-20931", dock: "Hall B · dock 6"}
+  - {code: VOLTARO,    name: Voltaro Mobility s.r.o., country: CZ, city: "Rovná, CZ", supplier_no: "VL0177", dock: "Battery hall · ramp 2"}
 
 materials:
 
@@ -39,10 +44,14 @@ materials:
         name: SMT bottom side
         steps: {LOADER: 8, LASER_PCB: 16, PASTE_PRINTER: 24, SPI: 20, PNP_CHIP: 42, PNP_IC: 34,
                 REFLOW_OVEN: 30, AOI: 28, UNLOADER: 8}
+        components: {RES-0402-10K: 14, CAP-0402-100N: 20, RES-0402-100R: 6, DIO-SOD123: 4,
+                     MOS-DPAK: 4, IC-CAN-SO8: 2}
       - op: SMT_TOP
         name: SMT top side
         steps: {LOADER: 8, PASTE_PRINTER: 24, SPI: 20, PNP_CHIP: 50, PNP_IC: 52,
                 REFLOW_OVEN: 30, AOI: 34, UNLOADER: 8, DEPANELER: 40}
+        components: {RES-0402-10K: 18, CAP-0402-100N: 26, CAP-0805-10U: 6, TRA-SOT23: 4, LED-0603-GRN: 2,
+                     IC-MCU-LQFP64: 1, IC-LDO-SOT223: 1, IND-1210-10U: 2, CON-SMD-6P: 1}
 
   - code: PCBA-LED-DRV-40
     name: LED-DRV-40 PCB assembly
@@ -56,6 +65,8 @@ materials:
         name: SMT top side
         steps: {LOADER: 8, LASER_PCB: 22, PASTE_PRINTER: 22, SPI: 18, PNP_CHIP: 45, PNP_IC: 30,
                 REFLOW_OVEN: 30, AOI: 30, UNLOADER: 8, DEPANELER: 40}
+        components: {RES-0402-10K: 8, CAP-0402-100N: 10, CAP-0805-10U: 4, DIO-SOD123: 2,
+                     IC-LED-QFN32: 1, IND-1210-10U: 1, MOS-DPAK: 1}
 
   - code: PCBA-BMS-12S
     name: BMS-12S PCB assembly
@@ -69,10 +80,13 @@ materials:
         name: SMT bottom side
         steps: {LOADER: 8, LASER_PCB: 12, PASTE_PRINTER: 22, SPI: 18, PNP_CHIP: 34, PNP_IC: 26,
                 REFLOW_OVEN: 30, AOI: 26, UNLOADER: 8}
+        components: {RES-0402-10K: 24, CAP-0402-100N: 30, RES-0603-0R: 6, MOS-DPAK: 6}
       - op: SMT_TOP
         name: SMT top side
         steps: {LOADER: 8, PASTE_PRINTER: 22, SPI: 18, PNP_CHIP: 46, PNP_IC: 48,
                 REFLOW_OVEN: 30, AOI: 30, UNLOADER: 8, DEPANELER: 24}
+        components: {RES-0402-10K: 30, CAP-0402-100N: 36, CAP-0603-1U: 12, TRA-SOT23: 12,
+                     IC-AFE-TQFP64: 1, IC-MCU-LQFP64: 1, IC-LDO-SOT223: 1, CON-SMD-6P: 2}
 
   - code: PCBA-PDC-8
     name: PDC-8 PCB assembly
@@ -86,15 +100,20 @@ materials:
         name: SMT top side
         steps: {LOADER: 8, LASER_PCB: 20, PASTE_PRINTER: 24, SPI: 20, PNP_CHIP: 50, PNP_IC: 70,
                 REFLOW_OVEN: 30, AOI: 32, UNLOADER: 8, DEPANELER: 40}
+        components: {RES-0402-10K: 10, CAP-0402-100N: 14, CAP-0603-1U: 4, TRA-SOT23: 2,
+                     IC-US-QFN24: 1, IC-MCU-LQFP64: 1, IC-LDO-SOT223: 1, IC-CAN-SO8: 1}
 
   # ------------------------------------------------------------- Finished goods
   - code: BCM-200
     name: Body control module BCM-200
     kind: FG
     customer: KRAFTWAGEN
+    customer_part: "KW-55120-BCM"
+    change_level: "C"
     pcba: PCBA-BCM-200
     unit_mm: [140, 100, 38]
-    packing: {klt_qty: 24, klt_per_pallet: 40, klt_mm: [400, 300, 147], pallet_mm: [1200, 800], pallet_type: EUR}
+    packing: {klt_qty: 24, klt_per_pallet: 40, klt_mm: [400, 300, 147], pallet_mm: [1200, 800], pallet_type: EUR,
+              unit_g: 310, klt_g: 1650}
     kit: {name: "housing, cover and connector", per_bin: 24}
     planning: {lot_sizes: [480, 720, 960]}
     routing:
@@ -107,9 +126,12 @@ materials:
     name: LED headlamp driver LED-DRV-40
     kind: FG
     customer: NORDAUTO
+    customer_part: "NA-7701-2201"
+    change_level: "B"
     pcba: PCBA-LED-DRV-40
     unit_mm: [95, 60, 28]
-    packing: {klt_qty: 40, klt_per_pallet: 40, klt_mm: [300, 200, 147], pallet_mm: [1200, 800], pallet_type: EUR}
+    packing: {klt_qty: 40, klt_per_pallet: 40, klt_mm: [300, 200, 147], pallet_mm: [1200, 800], pallet_type: EUR,
+              unit_g: 140, klt_g: 900}
     kit: {name: "housing and potting cup", per_bin: 40}
     planning: {lot_sizes: [800, 1200]}
     routing:
@@ -122,9 +144,12 @@ materials:
     name: Battery management board BMS-12S
     kind: FG
     customer: VOLTARO
+    customer_part: "VLT-BMS12S-03"
+    change_level: "D"
     pcba: PCBA-BMS-12S
     unit_mm: [190, 55, 16]
-    packing: {klt_qty: 12, klt_per_pallet: 32, klt_mm: [600, 400, 120], pallet_mm: [1200, 800], pallet_type: EUR}
+    packing: {klt_qty: 12, klt_per_pallet: 32, klt_mm: [600, 400, 120], pallet_mm: [1200, 800], pallet_type: EUR,
+              unit_g: 120, klt_g: 2700}
     kit: {name: "connector and spacers", per_bin: 30}
     planning: {lot_sizes: [240, 360, 480]}
     routing:
@@ -137,9 +162,12 @@ materials:
     name: Park distance control unit PDC-8
     kind: FG
     customer: NORDAUTO
+    customer_part: "NA-7740-0812"
+    change_level: "A"
     pcba: PCBA-PDC-8
     unit_mm: [110, 85, 32]
-    packing: {klt_qty: 30, klt_per_pallet: 40, klt_mm: [400, 300, 147], pallet_mm: [1200, 1000], pallet_type: CP1}
+    packing: {klt_qty: 30, klt_per_pallet: 40, klt_mm: [400, 300, 147], pallet_mm: [1200, 1000], pallet_type: CP1,
+              unit_g: 190, klt_g: 1650}
     kit: {name: "housing, cover and screws", per_bin: 30}
     planning: {lot_sizes: [600, 900]}
     routing:

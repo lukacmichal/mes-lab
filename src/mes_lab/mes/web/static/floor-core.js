@@ -434,16 +434,21 @@ const Floor = (() => {
     for (const id of [...S.robots.keys()]) if (!seen.has(id)) S.robots.delete(id);
   }
 
-  /* where a robot is, and the way it points: it drives forward along the lanes and shifts sideways
-     (omnidirectional wheels) on the short bits to and from a dock */
+  /* where a robot is, and the way it points: along every straight bit of its way, the short ones into and
+     out of a dock as well; at a stop the way the stop faces. The plant checks the robots against each other
+     with exactly this body (sim/traffic.py), so the picture must not lag behind it. */
   function robotExact(r) {
     const rec = r.rec;
     const legs = legsOf(rec);
     legs.current = !!rec.w;
     const on = onLegs(legs, S.sim);
     if (on) {
-      const turn = on.walking && on.len > 45;
-      return { x: on.x, y: on.y, ang: turn ? Math.atan2(on.dy, on.dx) : null, moving: on.walking };
+      if (on.walking) return { x: on.x, y: on.y, ang: Math.atan2(on.dy, on.dx), moving: true };
+      // standing at a stop before or between its drives: the way that stop faces
+      let face = null;
+      if (S.sim < legs[0].t) face = legs[0].f && legs[0].f[0];
+      else for (const w of legs) if (w.t <= S.sim && w.f) face = w.f[1];
+      return { x: on.x, y: on.y, ang: face !== null && face !== undefined ? face * Math.PI / 180 : null, moving: false };
     }
     return { x: rec.x, y: rec.y, ang: rec.f !== undefined ? rec.f * Math.PI / 180 : null, moving: false };
   }
@@ -454,18 +459,20 @@ const Floor = (() => {
       if (at.x === undefined) continue;
       const key = r.rec.w ? `w${r.rec.w.t}` : (r.rec.wh && r.rec.wh.length ? `w${r.rec.wh[r.rec.wh.length - 1].t}` : `s${r.rec.x},${r.rec.y}`);
       if (r.fresh) { r.x = at.x; r.y = at.y; r.ang = at.ang ?? 0; r.fresh = false; r.key = key; r.ox = r.oy = 0; }
-      else if (key !== r.key) {
-        r.ox = r.x - at.x; r.oy = r.y - at.y; r.key = key;
-        if (Math.hypot(r.ox, r.oy) > FAR_PERSON) r.ox = r.oy = 0;
-      }
-      r.ox *= k; r.oy *= k;
-      r.x = at.x + r.ox; r.y = at.y + r.oy;
+      else if (key !== r.key) r.key = key;
+      // a robot is drawn exactly where the plant has it (no glide from where the picture had it before): the
+      // plant keeps the robots apart with these very positions, a glide would push one into another
+      r.ox = r.oy = 0;
+      r.x = at.x; r.y = at.y;
       r.moving = at.moving;
       if (at.ang !== null) {                                     // turn towards the way, not in an instant
         let d = at.ang - r.ang;
         while (d > Math.PI) d -= 2 * Math.PI;
         while (d < -Math.PI) d += 2 * Math.PI;
-        const step = Math.min(Math.abs(d), dt * 5);
+        if (!at.moving && Math.abs(d) > Math.PI / 2) d -= Math.sign(d) * Math.PI;   // a stop gives an axis, not a front
+        // a quarter turn in a quarter of a plant second (30 u/s: it turns on the spot at the corner), never
+        // slower than 5 rad per second of the screen
+        const step = Math.min(Math.abs(d), Math.max(dt * 5, dt * Math.max(0, S.rate) * 2 * Math.PI));
         r.ang += Math.sign(d) * step;
       }
     }
@@ -507,7 +514,13 @@ const Floor = (() => {
       p = total > 0 ? 1 - now / total : 1;
       p = Math.min(1, Math.max(0, p));
     }
-    return { ...e, p, code };
+    let co = null;                     // a changeover going on: how far it is, seconds still to go
+    if (e.co) {
+      const [total, left] = e.co;
+      const now = Math.max(0, left - (S.sim - S.floorT));
+      co = { p: total > 0 ? Math.min(1, Math.max(0, 1 - now / total)) : 1, left: now };
+    }
+    return { ...e, p, co, code };
   }
 
   /* partial results: a piece in a machine shows what that machine has done so far */
@@ -532,6 +545,8 @@ const Floor = (() => {
     for (const r of f.tr || []) add(r.it.i, { t0: r.t, loc: { t: "ride", route: r.r, t0: r.t, d: r.d }, desc: r.it });
     for (const r of f.trh || []) add(r.i, { t0: r.t, loc: { t: "ride", route: r.r, t0: r.t, d: r.d } });
     for (const p of placements(f)) if (p.desc.at !== undefined && p.loc.t !== "ride") add(p.id, { t0: p.desc.at, loc: p.loc, desc: p.desc });
+    // a ride on a conveyor of the line: the piece is on its way to where the snapshot has it from the moment it left
+    for (const p of placements(f)) if (p.desc.bt && p.loc.t !== "ride") add(p.id, { t0: p.desc.bt[0], loc: { ...p.loc, bt: p.desc.bt }, desc: p.desc });
     S.timed = timed;
   }
 
@@ -599,7 +614,11 @@ const Floor = (() => {
       } else if (key !== s.key) {
         const path = beltPath(s.keyLoc, loc, s.x, s.y, at);
         if (path) {
+          // a ride on the conveyor to the next cell takes the plant's time (desc.bt: left, arrives); a move the
+          // plant makes at once (or one that is over already when the picture gets there) is a short glide
+          const bt = loc.bt || (s.desc && s.desc.bt);
           s.path = path; s.pathT = 0; s.pathDur = Math.min(0.9, Math.max(0.25, 0.18 + polyLength(path) / 260));
+          s.pathSim = bt && bt[1] > S.sim + 0.05 ? [bt[0], bt[1]] : null;      // a late picture joins the ride midway
           s.ox = s.oy = 0;
         } else {
           s.path = null; s.ox = s.x - at.x; s.oy = s.y - at.y;
@@ -609,11 +628,18 @@ const Floor = (() => {
       }
       if (s.path) {                                               // along the conveyors, never across
         s.pathT += dt;
-        const f = Math.min(1, s.pathT / s.pathDur);
+        let f;
+        if (s.pathSim) {                                          // at the conveyor's speed, in the plant's time
+          const [t0, t1] = s.pathSim;
+          f = t1 > t0 ? Math.min(1, Math.max(0, (S.sim - t0) / (t1 - t0))) : 1;
+        } else {
+          f = Math.min(1, s.pathT / s.pathDur);
+          f = f * f * (3 - 2 * f);
+        }
         s.path[s.path.length - 1] = [at.x, at.y];
-        const p = alongPoly(s.path, f * f * (3 - 2 * f));
+        const p = alongPoly(s.path, f);
         s.x = p[0]; s.y = p[1];
-        if (f >= 1) s.path = null;
+        if (f >= 1) { s.path = null; s.pathSim = null; }
       } else {
         s.ox *= k; s.oy *= k;
         s.x = at.x + s.ox; s.y = at.y + s.oy;

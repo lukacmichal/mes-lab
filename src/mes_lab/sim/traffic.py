@@ -32,6 +32,7 @@ PERSON_HALF = 5.5                  # a person next to a robot: half the shoulder
 ROBOT_HALF = (16.0, 10.5)          # half the length and half the width of a robot (32 x 21)
 MARGIN = 1.0
 WAITS = (0.0, 0.6, 1.2, 2.0, 3.0, 4.0, 5.5, 7.0, 9.0, 12.0, 15.0, 19.0, 24.0, 30.0)
+ROBOT_WAITS = WAITS + (40.0, 50.0, 65.0, 80.0, 100.0)   # a robot on a long drive waits for the others to pass
 REACH = 2 * ROBOT_HALF[0] + MARGIN  # nothing farther than this apart can touch
 
 
@@ -197,6 +198,7 @@ class Traffic:
         self.forced = 0                # walks that went although somebody stood in the way
         self.forced_go = 0             # walks that went after waiting long, although the way was not free
         self.forced_robots = 0
+        self.blockers: list = []       # the standing robots in the way of the last plan that was asked for
 
     # ------------------------------------------------------------------ who is where
     def stand(self, who, kind: str, x: float, y: float, face: float = 0.0) -> None:
@@ -211,8 +213,10 @@ class Traffic:
                     or a.box[3] + pad < b.box[1] or b.box[3] + pad < a.box[1])
 
     def _meets(self, who, mine: Plan, now: float) -> tuple[bool, bool, bool]:
-        """(meets a mover or a robot, blocked by a standing robot, passes a standing person)."""
+        """(meets a mover or a robot, blocked by a standing robot, passes a standing person). The standing
+        robots in the way are kept in `blockers`."""
         moving = blocked = person = False
+        self.blockers = []
         walk = [m for m in mine.parts() if m[1] > now and (m[0] <= mine.t1 + 0.01)]
         for other, theirs in self.plans.items():
             if other == who:
@@ -232,6 +236,7 @@ class Traffic:
                     if touch(mine.kind, leg, theirs.kind, still, now, mine.t1 + 0.01):
                         if theirs.kind == ROBOT:
                             blocked = True
+                            self.blockers.append(other)
                         else:
                             person = True
                         break
@@ -263,7 +268,8 @@ class Traffic:
         the walk now, for `go`)."""
         now = self.env.now
         base = Plan.make(kind, pts, now, speed, faces)
-        limit = WAITS if max_wait is None else tuple(w for w in WAITS if w <= max_wait)
+        waits = ROBOT_WAITS if kind == ROBOT else WAITS
+        limit = waits if max_wait is None else tuple(w for w in waits if w <= max_wait)
         for wait in limit:
             mine = base.shifted(wait) if wait else base
             moving, blocked, person = self._meets(who, mine, now)
@@ -279,6 +285,15 @@ class Traffic:
                 return wait, mine
         # a robot stands in the way, or the way is busy for longer than the longest wait: ask again later
         return None, base
+
+    def free_now(self, who, kind: str, pts: list[tuple[float, float]], speed: float,
+                 faces: tuple[float | None, float | None] = (None, None)) -> bool:
+        """Could this walk start right now without meeting anybody, standing people included? (Asks only,
+        plans nothing.)"""
+        keep = self.blockers
+        moving, blocked, person = self._meets(who, Plan.make(kind, pts, self.env.now, speed, faces), self.env.now)
+        self.blockers = keep
+        return not (moving or blocked or person)
 
     def commit(self, who, plan: Plan) -> None:
         self.plans[who] = plan

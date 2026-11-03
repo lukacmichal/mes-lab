@@ -16,13 +16,31 @@
     return keys.length ? `<span class="meas">${keys.map((k) => `${esc(k)}=${esc(m[k])}`).join(" · ")}</span>` : "";
   }
 
+  function label(lb, u) {
+    if (!lb) return u.kind === "KLT" || u.kind === "PALLET"
+      ? `<div class="panel" style="margin-bottom:16px"><h3>Label</h3><p class="empty">No label printed yet: a box gets its label at the label printer once it is full, a pallet when the palletizer closes it.</p></div>` : "";
+    const prints = lb.prints.map((p, i) => `<tr><td class="mono">${esc(dt(p.at))}</td><td>${i ? "reprint" : "printed"}</td><td>${esc(p.by)}</td><td>${esc(p.reason || "")}</td></tr>`).join("");
+    const tall = lb.template === "PALLET";
+    return `<div class="panel" style="margin-bottom:16px"><div class="unit-head"><h3 style="margin:0">Label · ${esc(lb.name || lb.template)}</h3><span class="spacer"></span>
+        ${MES.can("plant") ? `<button class="btn small" data-reprint>Print again…</button>` : ""}</div>
+      <div class="grid-2" style="grid-template-columns:${tall ? "minmax(0,1fr) minmax(0,1fr)" : "minmax(0,2fr) minmax(0,1fr)"};margin-top:10px">
+        <div class="set-lbl-prev"><img alt="label of ${esc(u.serial)}" src="/api/v1/labels/${encodeURIComponent(u.serial)}/svg?n=${lb.prints.length}" style="width:${tall ? "min(100%, 380px)" : "100%"}"></div>
+        <div><div class="facts" style="grid-template-columns:1fr 1fr">
+          <div><span>Printed</span>${esc(dt(lb.printed_at))}</div><div><span>Printer</span>${esc(lb.station)}</div>
+          <div><span>Template</span>${esc(lb.template)}</div><div><span>Settings</span>${lb.settings_rev ? `revision ${lb.settings_rev}` : "as built"}</div>
+        </div>
+        <table style="margin-top:10px"><tr><th>When</th><th></th><th>Who</th><th>Why</th></tr>${prints}</table>
+        <p class="faint" style="font-size:12px">The label as it was printed: a later change of the template does not change it. A reprint prints the same label again; who and why stay in its history.</p></div>
+      </div></div>`;
+  }
+
   function renderUnit(d) {
     const u = d.unit;
     const steps = (u.steps || []).map((s) => `<span class="chip ${u.completed.includes(s) ? "done" : ""}">${esc(s)}</span>`).join("");
     const holds = d.holds.length ? `<div class="warn-box"><b>On hold.</b> ${d.holds.map((h) =>
       `#${h.id} ${esc(h.kind)} ${esc(h.target)}: ${esc(h.reason)}`).join("<br>")}</div>` : "";
     const quarantine = u.status === "QUARANTINE" ? `<div class="warn-box"><b>In quarantine:</b> ${esc(u.quarantine_reason || "")}
-      ${window.MES_CAN_ACT ? `<div style="margin-top:8px;display:flex;gap:8px">
+      ${MES.can("quality") ? `<div style="margin-top:8px;display:flex;gap:8px">
         <button class="btn small" data-act="RETURN">Release to production</button>
         <button class="btn small danger" data-act="SCRAP">Scrap</button></div>` : ""}</div>` : "";
     const history = d.history.length ? `<table>
@@ -39,13 +57,21 @@
         <td>${esc(x.name)}<div class="faint mono">${esc(x.code)}</div></td><td>${esc(x.station)}</td>
         <td>${upill(x.status === "OPEN" ? "OPEN_DEFECT" : x.status, x.status)}</td><td class="mono">${esc(dt(x.closed_at))}</td></tr>`).join("")}
       </table>` : `<p class="empty">No defects.</p>`;
+    const comps = d.components || [];
+    const components = comps.length ? `<table>
+      <tr><th>Part</th><th>Reel / jar</th><th>Supplier lot</th><th>Placed at</th><th>Panel</th></tr>
+      ${comps.map((c) => `<tr><td><b>${esc(c.part === "PASTE" ? "Solder paste" : c.part)}</b><div class="faint">${esc(c.name)}</div></td>
+        <td class="mono">${esc(c.item)}</td>
+        <td><a class="mono" href="/material?lot=${encodeURIComponent(c.lot)}">${esc(c.lot)}</a></td>
+        <td>${esc(c.station)} <span class="faint">${esc(c.step)}</span></td><td>${c.serial === u.serial ? '<span class="faint">this</span>' : link(c.serial)}</td></tr>`).join("")}
+      </table>` : `<p class="empty">No SMT material recorded for it (made before the MES knew the reels, or not an SMT piece).</p>`;
 
     out.innerHTML = `
       <div class="panel" style="margin-bottom:16px">
         <div class="unit-head"><span class="serial">${esc(u.serial)}</span><span class="chip">${esc(u.kind)}</span>
           ${statusPill(u.status)}<span class="muted">${esc(u.material)} · ${esc(u.material_name)}</span>
           <span class="spacer"></span>
-          ${window.MES_CAN_ACT ? `<a class="btn small" href="/holds?serial=${encodeURIComponent(u.serial)}">Put on hold…</a>` : ""}</div>
+          ${MES.can("quality") ? `<a class="btn small" href="/holds?serial=${encodeURIComponent(u.serial)}">Put on hold…</a>` : ""}</div>
         <div class="facts">
           <div><span>Location</span>${esc(u.location || "–")}</div>
           <div><span>Last station</span>${esc(u.station || "–")}</div>
@@ -62,9 +88,20 @@
         <div class="panel"><h3>Went into</h3>${tree(d.down) || '<p class="empty">Not used further yet.</p>'}</div>
       </div>
       ${d.truncated ? '<p class="faint">The trees are cut after 400 pieces.</p>' : ""}
+      ${label(d.label, u)}
       <div class="panel" style="margin-bottom:16px"><h3>History</h3>${history}</div>
+      <div class="panel" style="margin-bottom:16px"><h3>Components · reels, lots and solder paste</h3>${components}</div>
       <div class="panel"><h3>Defects</h3>${defects}</div>`;
 
+    const again = out.querySelector("[data-reprint]");
+    if (again) again.addEventListener("click", async () => {
+      const reason = prompt("Why is the label printed again? (e.g. damaged, unreadable, lost)");
+      if (!reason || reason.trim().length < 3) return;
+      try {
+        await post(`/api/v1/labels/${encodeURIComponent(u.serial)}/reprint`, { reason: reason.trim() });
+        load(u.serial);
+      } catch (e) { alert(e.message); }
+    });
     out.querySelectorAll("[data-act]").forEach((b) => b.addEventListener("click", async () => {
       try {
         await post(`/api/v1/quarantine/${encodeURIComponent(u.serial)}/disposition`, { action: b.dataset.act });

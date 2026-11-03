@@ -12,12 +12,14 @@ wall clock, so plant time may be ahead of the real date.
 
 from __future__ import annotations
 
-from datetime import datetime, time
+from datetime import date, datetime, time
+from typing import Any
 
 from sqlalchemy import (
     JSON,
     BigInteger,
     Boolean,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -28,6 +30,7 @@ from sqlalchemy import (
     Text,
     Time,
     UniqueConstraint,
+    true as sa_true,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -190,6 +193,7 @@ class SimRun(Base):
     # the plant of this run: its lines and the knobs of the tuning game it was built with (None: as configured)
     lines: Mapped[list | None] = mapped_column(JSONType, nullable=True)
     knobs: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
+    settings_rev: Mapped[int | None] = mapped_column(Integer)   # the revision of the settings it was built with
 
 
 class WorkOrder(Base):
@@ -205,6 +209,10 @@ class WorkOrder(Base):
     completed_at: Mapped[datetime | None] = mapped_column(TS)
     qty_good: Mapped[int] = mapped_column(Integer, default=0)
     qty_scrap: Mapped[int] = mapped_column(Integer, default=0)
+    erp_order_no: Mapped[str | None] = mapped_column(String(20), unique=True)   # the production order it came from
+    erp_good: Mapped[int] = mapped_column(Integer, default=0, server_default="0")    # confirmed to the ERP so far
+    erp_scrap: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    erp_final: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     material: Mapped[Material] = relationship()
     jobs: Mapped[list[Job]] = relationship(back_populates="work_order", order_by="Job.seq")
 
@@ -351,6 +359,23 @@ class Shipment(Base):
     pallets: Mapped[int] = mapped_column(Integer)
     klt: Mapped[int] = mapped_column(Integer)
     units: Mapped[int] = mapped_column(Integer)
+    erp_sent: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")   # the DESADV is out
+
+
+class Label(Base):
+    """A label the MES printed for a box or pallet: the values and the layout as printed (the template may
+    change later), and every print of it ([{at, by, reason}], the first one by the printer)."""
+    __tablename__ = "label"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    unit_id: Mapped[int] = mapped_column(ForeignKey("unit.id", ondelete="CASCADE"), unique=True)
+    serial: Mapped[str] = mapped_column(String(40), index=True)
+    template: Mapped[str] = mapped_column(String(20))
+    settings_rev: Mapped[int | None] = mapped_column(Integer)      # the revision of the settings in force
+    printed_at: Mapped[datetime] = mapped_column(TS, index=True)
+    station: Mapped[str] = mapped_column(String(30))
+    data: Mapped[dict] = mapped_column(JSONType)
+    layout: Mapped[dict] = mapped_column(JSONType)
+    prints: Mapped[list] = mapped_column(JSONType)
 
 
 class UnitLink(Base):
@@ -400,7 +425,7 @@ class Hold(Base):
     """Containment: units matching the hold are stopped at their next check-in."""
     __tablename__ = "hold"
     id: Mapped[int] = mapped_column(primary_key=True)
-    kind: Mapped[str] = mapped_column(String(20))  # SERIAL WORK_ORDER STATION_WINDOW
+    kind: Mapped[str] = mapped_column(String(20))  # SERIAL WORK_ORDER STATION_WINDOW MATERIAL_LOT
     target: Mapped[str] = mapped_column(String(60))
     work_order_id: Mapped[int | None] = mapped_column(ForeignKey("work_order.id"))
     station_id: Mapped[int | None] = mapped_column(ForeignKey("station.id"))
@@ -423,15 +448,196 @@ class HoldUnit(Base):
                                          index=True)
 
 
+class Employee(Base):
+    """A person of the plant as the plant reports its roster (the same seed gives the same people)."""
+    __tablename__ = "employee"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    name: Mapped[str] = mapped_column(String(80))
+    role: Mapped[str] = mapped_column(String(20))
+    shift: Mapped[str] = mapped_column(String(4))
+    sex: Mapped[str] = mapped_column(String(1))
+    home: Mapped[str | None] = mapped_column(String(60))          # the seat that is theirs
+    updated_at: Mapped[datetime] = mapped_column(TS)
+
+
+class Qualification(Base):
+    """A skill of a person (SMT, FA, INSPECTION, PACK, REPAIR) and until when its certificate is valid."""
+    __tablename__ = "qualification"
+    employee_id: Mapped[int] = mapped_column(ForeignKey("employee.id", ondelete="CASCADE"), primary_key=True)
+    skill: Mapped[str] = mapped_column(String(20), primary_key=True)
+    valid_until: Mapped[datetime | None] = mapped_column(TS)
+    revoked: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")   # taken away on the web
+    note: Mapped[str | None] = mapped_column(String(200))                                    # why it was taken away
+
+
+class QualificationChange(Base):
+    """A decision on the web about a qualification of a person (mes/qualifications.py): GRANT, RENEW or
+    REVOKE, the validity before and after, from when it holds, why and who."""
+    __tablename__ = "qualification_change"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    employee_id: Mapped[int] = mapped_column(ForeignKey("employee.id", ondelete="CASCADE"), index=True)
+    skill: Mapped[str] = mapped_column(String(20))
+    action: Mapped[str] = mapped_column(String(8))
+    valid_until: Mapped[datetime | None] = mapped_column(TS)
+    before: Mapped[datetime | None] = mapped_column(TS)
+    effective_at: Mapped[datetime] = mapped_column(TS)
+    reason: Mapped[str] = mapped_column(String(300))
+    by: Mapped[str] = mapped_column(String(40))
+    at: Mapped[datetime] = mapped_column(TS, index=True)                                     # plant time
+
+
+class Attendance(Base):
+    """Who came to a shift, who was off (sick, holiday) and which seat they held."""
+    __tablename__ = "attendance"
+    shift_start: Mapped[datetime] = mapped_column(TS, primary_key=True)
+    employee_id: Mapped[int] = mapped_column(ForeignKey("employee.id", ondelete="CASCADE"), primary_key=True)
+    shift: Mapped[str] = mapped_column(String(4))
+    status: Mapped[str] = mapped_column(String(10))               # PRESENT SICK HOLIDAY
+    seat: Mapped[str | None] = mapped_column(String(60))
+    covers: Mapped[int | None] = mapped_column(Integer)           # the absent person whose seat they took
+
+
+class Reel(Base):
+    """A reel of SMT components with the label it got at goods-in: the part, the supplier lot, how much is
+    left, and its floor life when the part is moisture sensitive (MSL)."""
+    __tablename__ = "reel"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    serial: Mapped[str] = mapped_column(String(24), unique=True)
+    part: Mapped[str] = mapped_column(String(30), index=True)
+    lot: Mapped[str] = mapped_column(String(24), index=True)
+    qty: Mapped[int] = mapped_column(Integer)
+    left: Mapped[int] = mapped_column(Integer)
+    msl: Mapped[str | None] = mapped_column(String(4))
+    floor_used_s: Mapped[float] = mapped_column(Float, default=0.0)   # floor life used before out_since
+    out_since: Mapped[datetime | None] = mapped_column(TS)            # out of the dry bag since
+    status: Mapped[str] = mapped_column(String(10), index=True)       # STORE TRANSIT LINE FEEDER NEXT EMPTY BAKE GONE
+    station_id: Mapped[int | None] = mapped_column(ForeignKey("station.id"))
+    slot: Mapped[str | None] = mapped_column(String(30))
+    eta_s: Mapped[float | None] = mapped_column(Float)                 # runs out in (at the last report)
+    supplier: Mapped[str | None] = mapped_column(String(12))
+    note: Mapped[str | None] = mapped_column(String(24))               # the delivery note it came with
+    received_at: Mapped[datetime | None] = mapped_column(TS)
+    line: Mapped[str | None] = mapped_column(String(20))               # issued to / in the rack of this line
+    updated_at: Mapped[datetime] = mapped_column(TS)
+
+
+class FeederLoad(Base):
+    """A reel feeding a placer from `started_at` to `ended_at`: every panel the placer made meanwhile
+    got parts of it (the genealogy of the components)."""
+    __tablename__ = "feeder_load"
+    __table_args__ = (Index("ix_feeder_load_station", "station_id", "started_at"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    reel_id: Mapped[int] = mapped_column(ForeignKey("reel.id", ondelete="CASCADE"), index=True)
+    station_id: Mapped[int] = mapped_column(ForeignKey("station.id"))
+    slot: Mapped[str] = mapped_column(String(30))
+    started_at: Mapped[datetime] = mapped_column(TS)
+    ended_at: Mapped[datetime | None] = mapped_column(TS)
+    reason: Mapped[str | None] = mapped_column(String(12))            # EMPTY CHANGEOVER MSL
+
+
+class PasteJar(Base):
+    """A jar of solder paste: out of the fridge (thawing), opened on a printer, used up or expired."""
+    __tablename__ = "paste_jar"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    serial: Mapped[str] = mapped_column(String(24), unique=True)
+    lot: Mapped[str] = mapped_column(String(24))
+    out_at: Mapped[datetime] = mapped_column(TS)                      # out of the fridge
+    opened_at: Mapped[datetime | None] = mapped_column(TS)            # on the stencil
+    ended_at: Mapped[datetime | None] = mapped_column(TS)
+    station_id: Mapped[int | None] = mapped_column(ForeignKey("station.id"), index=True)
+    prints: Mapped[int] = mapped_column(Integer)                      # prints left
+    status: Mapped[str] = mapped_column(String(10))                   # THAW OPEN EMPTY EXPIRED GONE
+    reason: Mapped[str | None] = mapped_column(String(12))
+
+
+class MaterialScan(Base):
+    """A scan of SMT material at a machine and what the MES said to it."""
+    __tablename__ = "material_scan"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    at: Mapped[datetime] = mapped_column(TS, index=True)
+    station_id: Mapped[int | None] = mapped_column(ForeignKey("station.id"))
+    place: Mapped[str | None] = mapped_column(String(20))             # goods-in: GI
+    kind: Mapped[str] = mapped_column(String(8))                      # LOAD SPLICE PASTE ARRIVAL RECEIPT ISSUE
+    item: Mapped[str] = mapped_column(String(24))
+    part: Mapped[str | None] = mapped_column(String(30))
+    slot: Mapped[str | None] = mapped_column(String(30))
+    result: Mapped[str] = mapped_column(String(20))                   # OK or the reason it was refused
+    message: Mapped[str | None] = mapped_column(Text)
+    operator: Mapped[int | None] = mapped_column(Integer)
+
+
+class Delivery(Base):
+    """A supplier truck at goods-in: its delivery note and what was received (or refused) of it."""
+    __tablename__ = "delivery"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    note: Mapped[str] = mapped_column(String(24), unique=True)
+    supplier: Mapped[str] = mapped_column(String(12))
+    arrived_at: Mapped[datetime] = mapped_column(TS, index=True)
+    expected: Mapped[dict] = mapped_column(JSONB)                     # part -> reels on the note
+    received: Mapped[dict] = mapped_column(JSONB)                     # part -> reels received
+    refused: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class StationVerification(Base):
+    """The master sample check of a tester: done at the start of every shift before it may test
+    production (the check-in refuses units until a passed check of this shift is on record)."""
+    __tablename__ = "station_verification"
+    __table_args__ = (Index("ix_verification_station_at", "station_id", "at"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_id: Mapped[str | None] = mapped_column(String(36))
+    station_id: Mapped[int] = mapped_column(ForeignKey("station.id"))
+    at: Mapped[datetime] = mapped_column(TS)                  # plant time of the result
+    started_at: Mapped[datetime | None] = mapped_column(TS)
+    shift_start: Mapped[datetime] = mapped_column(TS)         # the shift it counts for
+    result: Mapped[str] = mapped_column(String(8))            # PASS FAIL
+    person: Mapped[str | None] = mapped_column(String(60))
+
+
+class SpcAlarm(Base):
+    """A rule of a control chart fired: the reaction of the control plan (containment, adjustment,
+    disposition by data) is tracked here."""
+    __tablename__ = "spc_alarm"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    station_id: Mapped[int] = mapped_column(ForeignKey("station.id"))
+    station_code: Mapped[str] = mapped_column(String(40))
+    characteristic: Mapped[str] = mapped_column(String(40))
+    rule: Mapped[str] = mapped_column(String(4))
+    raised_at: Mapped[datetime] = mapped_column(TS, index=True)
+    status: Mapped[str] = mapped_column(String(12), index=True)   # ADJUSTING CLOSED
+    hold_id: Mapped[int | None] = mapped_column(ForeignKey("hold.id"))
+    closed_at: Mapped[datetime | None] = mapped_column(TS)
+    note: Mapped[str | None] = mapped_column(String(200))
+
+
 class SimCommand(Base):
     """Instruction for the shop floor (release or scrap an item in quarantine),
     delivered with ingest responses until the plant confirms it."""
     __tablename__ = "sim_command"
     id: Mapped[int] = mapped_column(primary_key=True)
     serial: Mapped[str] = mapped_column(String(40))
-    action: Mapped[str] = mapped_column(String(12))  # RETURN SCRAP
+    action: Mapped[str] = mapped_column(String(12))  # RETURN SCRAP UNLOAD_REEL ADJUST HOLD_LOT FAULT_START ...
     created_at: Mapped[datetime] = mapped_column(TS)
     acked_at: Mapped[datetime | None] = mapped_column(TS, index=True)
+    data: Mapped[dict | None] = mapped_column(JSONType, nullable=True)     # e.g. the fault of a training scenario
+
+
+class TrainingRun(Base):
+    """A training scenario played in the live plant (mes/training.py): what was done to the plant (params),
+    what the trainee answered, and the grade (result)."""
+    __tablename__ = "training_run"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    scenario: Mapped[str] = mapped_column(String(20))
+    status: Mapped[str] = mapped_column(String(10), index=True)     # RUNNING DONE ABORTED
+    run_id: Mapped[str | None] = mapped_column(String(36))          # the run of the plant it began in
+    started_at: Mapped[datetime] = mapped_column(TS)                # plant time
+    started_by: Mapped[str] = mapped_column(String(60))
+    params: Mapped[dict] = mapped_column(JSONType)
+    fault_end_at: Mapped[datetime | None] = mapped_column(TS)       # the fault stopped (fixed, held, by itself)
+    fault_end_how: Mapped[str | None] = mapped_column(String(80))
+    finished_at: Mapped[datetime | None] = mapped_column(TS)
+    finished_by: Mapped[str | None] = mapped_column(String(60))
+    answer: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
+    result: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
 
 
 class AppUser(Base):
@@ -442,3 +648,156 @@ class AppUser(Base):
     password_hash: Mapped[str] = mapped_column(String(200))
     created_at: Mapped[datetime] = mapped_column(TS)
     last_login_at: Mapped[datetime | None] = mapped_column(TS)
+    # ADMIN (everything, users too), ENGINEER (settings), QUALITY (holds, quarantine), SUPERVISOR (the plant:
+    # speed, pause, time, calls, scenarios); see mes/auth.py
+    role: Mapped[str] = mapped_column(String(16), default="ADMIN", server_default="ADMIN")
+    active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=sa_true())
+
+
+class AuditEvent(Base):
+    """Something an administrator changed outside the plant settings: a user added, a role or a password."""
+    __tablename__ = "audit_event"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    at: Mapped[datetime] = mapped_column(TS, index=True)
+    by: Mapped[str] = mapped_column(String(40))
+    kind: Mapped[str] = mapped_column(String(12))          # USER
+    subject: Mapped[str] = mapped_column(String(80))
+    action: Mapped[str] = mapped_column(String(20))        # CREATE ROLE ACTIVE NAME PASSWORD
+    detail: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
+
+
+class SettingRevision(Base):
+    """A set of changes of the settings page, like an engineering change in a plant: a DRAFT while people
+    edit it, then released with a reason and SCHEDULED for a plant time (now, the start of the next shift),
+    ACTIVE from then on (or DISCARDED). A released revision never changes again. `overrides` is everything
+    in force with it (all the changes of the revisions before it, see mes_lab.settings)."""
+    __tablename__ = "setting_revision"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    status: Mapped[str] = mapped_column(String(12), index=True)   # DRAFT SCHEDULED ACTIVE DISCARDED
+    number: Mapped[int | None] = mapped_column(Integer, unique=True)   # Rev 1, 2, ... given at the release
+    created_at: Mapped[datetime] = mapped_column(TS)
+    created_by: Mapped[str] = mapped_column(String(40))
+    reason: Mapped[str | None] = mapped_column(String(300))
+    released_at: Mapped[datetime | None] = mapped_column(TS)
+    released_by: Mapped[str | None] = mapped_column(String(40))
+    effective_at: Mapped[datetime | None] = mapped_column(TS)      # plant time
+    activated_at: Mapped[datetime | None] = mapped_column(TS)      # plant time it took effect
+    plant: Mapped[bool] = mapped_column(Boolean, default=False)    # the machines need it: the plant builds anew
+    overrides: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
+    check: Mapped[dict | None] = mapped_column(JSONType, nullable=True)   # the trial run before the release
+    changes: Mapped[list[SettingChange]] = relationship(back_populates="revision", order_by="SettingChange.id")
+
+
+class SettingChange(Base):
+    """One change of a revision: a path into the config (mes_lab.settings), the value in force before it and
+    the new one. SET a value (None takes a key away: a part out of the BOM), RESET back to the config files."""
+    __tablename__ = "setting_change"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    revision_id: Mapped[int] = mapped_column(ForeignKey("setting_revision.id"), index=True)
+    path: Mapped[str] = mapped_column(String(200), index=True)
+    action: Mapped[str] = mapped_column(String(8))                 # SET RESET
+    old: Mapped[Any | None] = mapped_column(JSONType, nullable=True)
+    new: Mapped[Any | None] = mapped_column(JSONType, nullable=True)
+    at: Mapped[datetime] = mapped_column(TS)
+    by: Mapped[str] = mapped_column(String(40))
+    revision: Mapped[SettingRevision] = relationship(back_populates="changes")
+
+
+# ============================================================== the fake ERP and the interface
+# The ERP is another system with its own tables (erp_*). The MES never reads them and the ERP never reads
+# the tables of the MES: they only exchange messages (integration_message), see mes_lab.erp.
+
+class IntegrationMessage(Base):
+    """One message on the interface between the ERP and the MES. The ID is the idempotency key: the
+    sender may deliver the same message more than once, the receiver books it only once."""
+    __tablename__ = "integration_message"
+    __table_args__ = (Index("ix_integration_message_queue", "direction", "status", "next_at"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    direction: Mapped[str] = mapped_column(String(10))            # ERP>MES  MES>ERP
+    kind: Mapped[str] = mapped_column(String(20))                 # PRODUCTION_ORDER ORDER_RECEIVED CONFIRMATION ...
+    ref: Mapped[str] = mapped_column(String(40), index=True)      # the business document: order, ASN, ...
+    payload: Mapped[dict] = mapped_column(JSONType)
+    status: Mapped[str] = mapped_column(String(10), index=True)   # PENDING DONE ERROR DISCARDED
+    attempts: Mapped[int] = mapped_column(Integer, default=0)     # deliveries tried
+    duplicates: Mapped[int] = mapped_column(Integer, default=0)   # deliveries the receiver had seen before
+    created_at: Mapped[datetime] = mapped_column(TS, index=True)  # plant time
+    next_at: Mapped[datetime] = mapped_column(TS)                 # not delivered before this
+    done_at: Mapped[datetime | None] = mapped_column(TS)
+    error: Mapped[str | None] = mapped_column(String(300))        # the last failure
+    result: Mapped[str | None] = mapped_column(String(300))       # what the receiver did
+    log: Mapped[list] = mapped_column(JSONType, default=list)     # [plant time, what happened]
+
+
+class IntegrationInbox(Base):
+    """The message IDs a receiver has processed (its idempotency memory)."""
+    __tablename__ = "integration_inbox"
+    message_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    receiver: Mapped[str] = mapped_column(String(10))
+    processed_at: Mapped[datetime] = mapped_column(TS, index=True)
+
+
+class ErpCallOff(Base):
+    """A call-off of a customer for one product (VDA 4905 / DELFOR): daily quantities for the days ahead.
+    The newest one received is in force for the days it covers."""
+    __tablename__ = "erp_call_off"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    number: Mapped[str] = mapped_column(String(30), unique=True)
+    customer: Mapped[str] = mapped_column(String(20))
+    material: Mapped[str] = mapped_column(String(30), index=True)
+    received_at: Mapped[datetime] = mapped_column(TS, index=True)
+    lines: Mapped[list[ErpCallOffLine]] = relationship(back_populates="call_off", order_by="ErpCallOffLine.due",
+                                                       cascade="all, delete-orphan", passive_deletes=True)
+
+
+class ErpCallOffLine(Base):
+    __tablename__ = "erp_call_off_line"
+    __table_args__ = (UniqueConstraint("call_off_id", "due"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    call_off_id: Mapped[int] = mapped_column(ForeignKey("erp_call_off.id", ondelete="CASCADE"))
+    due: Mapped[date] = mapped_column(Date, index=True)
+    qty: Mapped[int] = mapped_column(Integer)
+    firm: Mapped[bool] = mapped_column(Boolean)
+    call_off: Mapped[ErpCallOff] = relationship(back_populates="lines")
+
+
+class ErpProductionOrder(Base):
+    """A production order of the ERP: CREATED (sent to the MES), RELEASED (the MES took it over),
+    CLOSED (the final confirmation came: technically complete)."""
+    __tablename__ = "erp_production_order"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    number: Mapped[str] = mapped_column(String(20), unique=True)
+    material: Mapped[str] = mapped_column(String(30), index=True)
+    qty: Mapped[int] = mapped_column(Integer)
+    due: Mapped[date] = mapped_column(Date)
+    status: Mapped[str] = mapped_column(String(10), index=True)
+    created_at: Mapped[datetime] = mapped_column(TS, index=True)
+    received_at: Mapped[datetime | None] = mapped_column(TS)
+    closed_at: Mapped[datetime | None] = mapped_column(TS)
+    mes_order_no: Mapped[str | None] = mapped_column(String(20))
+    good: Mapped[int] = mapped_column(Integer, default=0)          # sum of the confirmations
+    scrap: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class ErpConfirmation(Base):
+    __tablename__ = "erp_confirmation"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    order_id: Mapped[int] = mapped_column(ForeignKey("erp_production_order.id", ondelete="CASCADE"), index=True)
+    message_id: Mapped[str] = mapped_column(String(36))
+    good: Mapped[int] = mapped_column(Integer)                     # < 0: a reversal
+    scrap: Mapped[int] = mapped_column(Integer)
+    final: Mapped[bool] = mapped_column(Boolean)
+    at: Mapped[datetime] = mapped_column(TS, index=True)
+
+
+class ErpStockMove(Base):
+    """A goods movement of a finished good in the books of the ERP; the stock is the sum.
+    GR goods receipt from production (101), GR_REV its reversal (102), GI goods issue to a customer (601),
+    COUNT the difference found by a stock count (701 / 702)."""
+    __tablename__ = "erp_stock_move"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    material: Mapped[str] = mapped_column(String(30), index=True)
+    qty: Mapped[int] = mapped_column(Integer)
+    kind: Mapped[str] = mapped_column(String(8))
+    ref: Mapped[str] = mapped_column(String(40))
+    customer: Mapped[str | None] = mapped_column(String(20))
+    at: Mapped[datetime] = mapped_column(TS, index=True)

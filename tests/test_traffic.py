@@ -76,6 +76,21 @@ def test_in_the_running_plant_people_and_robots_keep_apart(model):
     hits, where, plant = overlaps.run(hours=1.5, seed=4, start_h=7.0, step=1.0, quiet=True)
     total = sum(hits.values())
     robots = sum(n for (kinds, *_), n in hits.items() if "R" in kinds)
-    assert robots <= 3, dict(hits)
+    assert robots <= 5, dict(hits)            # (nine relief people a shift since 0.10.0: busier aisles at the change)
     assert total <= 25, dict(hits)
     assert plant.traffic.waits > 20                                    # people and robots did let each other pass
+
+
+def test_robots_give_way_by_their_number_instead_of_driving_to_the_charger(model):
+    """A robot that waits for a taken stop steps aside to a free one when it is in the way (of a driving robot,
+    or of one with a lower number that waits for its stop); none goes through another one."""
+    from datetime import UTC, datetime
+    from mes_lab.sim.core import PlantClock
+    from mes_lab.sim.dispatch import LocalDispatcher
+    from mes_lab.sim.plant import PlantSim
+    plant = PlantSim(model, PlantClock(datetime(2026, 1, 5, 6, 0, tzinfo=UTC)), LocalDispatcher(model, 4), seed=4)
+    plant.env.run(until=6 * 3600)
+    fleet = plant.fleet
+    assert plant.traffic.forced_robots == 0
+    assert sum(r.asides for r in fleet.robots) > 10
+    assert fleet.done > 200

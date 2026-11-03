@@ -1,0 +1,59 @@
+# Labels the MES prints (see src/mes_lab/labels). Changed on the settings page like any master data.
+#
+# supplier: who we are on the labels.
+# templates: one per container kind.
+#   KLT    - the box label after VDA 4902 (210 x 74 mm): printed when a full box passes the label printer
+#            (BOX_LABEL) of a packing line. Code 39 bar codes with a data identifier in front of the value:
+#            N delivery note, P customer part number, Q quantity, V supplier number, S package ID, H batch.
+#   PALLET - the pallet label (A5, 148 x 210 mm): printed when a pallet is full; its SSCC as a GS1-128 bar
+#            code (application identifier 00) is what the truck loading and the customer scan.
+# A field: x, y, w, h in mm from the top left corner; title = the small caption; value = text with
+# {placeholders} (the list is on the settings page); size = height of the text in mm; barcode = code39 or
+# code128 (code128 with di "(00)" = GS1-128 SSCC); di = the data identifier; show = print it or not.
+labels:
+  supplier:
+    name: ACME Automotive Electronics s.r.o.
+    address: Plant 1 · 7 Foundry Road · Labtown
+  templates:
+    KLT:
+      name: KLT box label (VDA 4902)
+      kind: KLT
+      size_mm: [210, 74]
+      fields:
+        receiver:      {title: "Receiver", value: "{customer_name}, {customer_city}", x: 0, y: 0, w: 105, h: 14, size: 4, bold: true}
+        dock:          {title: "Dock / unloading point", value: "{dock}", x: 105, y: 0, w: 105, h: 14, size: 4}
+        delivery_note: {title: "Delivery note No. (N)", value: "{delivery_note}", x: 0, y: 14, w: 70, h: 16, barcode: code39, di: "N"}
+        supplier:      {title: "Supplier", value: "{supplier_name}", x: 70, y: 14, w: 80, h: 16, size: 2.8}
+        weight:        {title: "Net / gross kg", value: "{net_kg} / {gross_kg}", x: 150, y: 14, w: 35, h: 16, size: 3}
+        boxes:         {title: "Boxes", value: "{boxes}", x: 185, y: 14, w: 25, h: 16, size: 4}
+        customer_part: {title: "Customer part No. (P)", value: "{customer_part}", x: 0, y: 30, w: 125, h: 16, size: 4.5, bold: true, barcode: code39, di: "P"}
+        quantity:      {title: "Quantity (Q)", value: "{qty}", x: 125, y: 30, w: 85, h: 16, size: 4.5, bold: true, barcode: code39, di: "Q"}
+        description:   {title: "Description", value: "{description}", x: 0, y: 46, w: 70, h: 14, size: 2.6}
+        supplier_part: {title: "Supplier part No.", value: "{supplier_part}", x: 70, y: 46, w: 50, h: 14, size: 3}
+        supplier_no:   {title: "Supplier No. (V)", value: "{supplier_no}", x: 120, y: 46, w: 90, h: 14, size: 3, barcode: code39, di: "V"}
+        date:          {title: "Date", value: "{date}", x: 0, y: 60, w: 30, h: 14, size: 3}
+        change_level:  {title: "Change level", value: "{change_level}", x: 30, y: 60, w: 25, h: 14, size: 3}
+        package_id:    {title: "Package ID (S)", value: "{package_id}", x: 55, y: 60, w: 85, h: 14, size: 3, barcode: code39, di: "S"}
+        batch:         {title: "Batch No. (H)", value: "{batch}", x: 140, y: 60, w: 70, h: 14, size: 3, barcode: code39, di: "H"}
+    PALLET:
+      name: Pallet label with the SSCC (GS1-128)
+      kind: PALLET
+      size_mm: [148, 210]
+      fields:
+        from:          {title: "From", value: "{supplier_name}", x: 0, y: 0, w: 74, h: 20, size: 3}
+        to:            {title: "To", value: "{customer_name}, {customer_city}", x: 74, y: 0, w: 74, h: 20, size: 3.4, bold: true}
+        dock:          {title: "Dock / unloading point", value: "{dock}", x: 0, y: 20, w: 74, h: 14, size: 3.4}
+        date:          {title: "Packed", value: "{date}", x: 74, y: 20, w: 37, h: 14, size: 3.4}
+        line:          {title: "Packing line", value: "{line}", x: 111, y: 20, w: 37, h: 14, size: 3.4}
+        customer_part: {title: "Customer part No. (P)", value: "{customer_part}", x: 0, y: 34, w: 148, h: 24, size: 5, bold: true, barcode: code39, di: "P"}
+        description:   {title: "Description", value: "{description}", x: 0, y: 58, w: 104, h: 13, size: 3}
+        change_level:  {title: "Change level", value: "{change_level}", x: 104, y: 58, w: 44, h: 13, size: 3.4}
+        quantity:      {title: "Quantity (Q)", value: "{qty}", x: 0, y: 71, w: 74, h: 24, size: 5, bold: true, barcode: code39, di: "Q"}
+        boxes:         {title: "KLT boxes", value: "{boxes}", x: 74, y: 71, w: 30, h: 24, size: 5}
+        weight:        {title: "Net / gross kg", value: "{net_kg} / {gross_kg}", x: 104, y: 71, w: 44, h: 24, size: 3.4}
+        supplier_no:   {title: "Supplier No. (V)", value: "{supplier_no}", x: 0, y: 95, w: 74, h: 22, size: 3.4, barcode: code39, di: "V"}
+        batch:         {title: "Batch No.", value: "{batch}", x: 74, y: 95, w: 74, h: 22, size: 3}
+        sscc_text:     {title: "SSCC", value: "{sscc_text}", x: 0, y: 117, w: 148, h: 14, size: 6, bold: true}
+        sscc:          {title: "(00) SSCC", value: "{sscc}", x: 0, y: 131, w: 148, h: 46, size: 3, barcode: code128, di: "(00)"}
+        delivery_note: {title: "Delivery note No. (N)", value: "{delivery_note}", x: 0, y: 177, w: 148, h: 20, barcode: code39, di: "N"}
+        address:       {title: "Supplier address", value: "{supplier_address}", x: 0, y: 197, w: 148, h: 13, size: 2.8}

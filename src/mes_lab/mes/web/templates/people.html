@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% from "_help.html" import bi, bi_inline, help %}
+{% block title %}People{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>{{ bi_inline("People and qualifications", "Ľudia a kvalifikácie") }}</h1>
+  <span class="sub">{{ bi_inline("Who may work where, who came today, whose certificate runs out", "Kto smie kde pracovať, kto dnes prišiel, komu vyprší certifikát") }}</span>
+</div>
+
+{% call help("people") %}
+  <div class="cols">
+    {{ bi("<b>The qualification matrix:</b> every operator is qualified for skills: <i>SMT</i> (the SMT lines), <i>FA</i> (loading and the floater of final assembly, the testers), <i>INSPECTION</i> (the visual final inspection: an eye test once a year), <i>PACK</i> (packing and palletizing) and <i>REPAIR</i> (the repair benches: an IPC-7711/7721 certificate). A green cell is valid, amber runs out within 30 days, red has run out. The MES checks the person logged in at a station at every check-in: a person without a valid qualification is refused (the machine waits for somebody qualified).",
+          "<b>Kvalifikačná matica:</b> každý operátor má kvalifikácie: <i>SMT</i> (linky SMT), <i>FA</i> (nakladanie a „floater“ finálnej montáže, testery), <i>INSPECTION</i> (vizuálna výstupná kontrola: test zraku raz ročne), <i>PACK</i> (balenie a paletizácia) a <i>REPAIR</i> (opravárenské stoly: certifikát IPC-7711/7721). Zelená bunka je platná, oranžová vyprší do 30 dní, červená už vypršala. MES pri každom check-ine overí človeka prihláseného na stanici: bez platnej kvalifikácie ho odmietne (stroj čaká na niekoho kvalifikovaného).") }}
+    {{ bi("<b>Absences and cover:</b> in every shift some people are off: sick (about " ~ ((absence.sick * 100)|round(1)) ~ " %) or on holiday (about " ~ ((absence.holiday * 100)|round(1)) ~ " %). At the start of the shift the foreman covers their seats with qualified relief people, the machine seats first (loading, inspection, packing, repair: nothing works there without a person), then the desk seats; if a machine seat is still empty, a qualified desk operator moves over. A seat nobody qualified can take stays empty for the shift. Fewer relief people left over also means breaks without a relief: the machine of that operator waits meanwhile.",
+          "<b>Absencie a zástup:</b> v každej zmene niekto chýba: chorý (asi " ~ ((absence.sick * 100)|round(1)) ~ " %) alebo na dovolenke (asi " ~ ((absence.holiday * 100)|round(1)) ~ " %). Na začiatku zmeny majster ich miesta obsadí kvalifikovanými záskokmi, najprv miesta pri strojoch (nakladanie, kontrola, balenie, opravy: tam bez človeka nič nejde), potom miesta pri stoloch; ak je miesto pri stroji stále prázdne, presunie sa naň kvalifikovaný operátor od stola. Miesto, ktoré nemá kto kvalifikovaný obsadiť, ostane celú zmenu prázdne. Menej voľných záskokov znamená aj prestávky bez záskoku: stroj toho operátora medzitým čaká.") }}
+    {{ bi("<b>Changing a qualification:</b> after a training a supervisor <i>grants</i> the skill, after the eye test or the IPC course the certificate is <i>renewed</i>, and after a quality escape a qualification can be <i>taken away</i> until the person is trained again. Every decision is recorded with the reason and who made it (the table at the bottom). A grant or a renewal holds at once; taking away holds from the start of the next shift: the foreman plans the seats at the start of a shift, so nobody is pulled off a running machine. An operator who lost the skill of their own seat goes to retraining and the seat is covered like an absence, until the skill is granted again. The plant takes the decisions over, and they stay over every new run of the plant.",
+          "<b>Zmena kvalifikácie:</b> po zaškolení majster kvalifikáciu <i>udelí</i>, po teste zraku alebo kurze IPC sa certifikát <i>obnoví</i> a po úniku chyby sa dá kvalifikácia <i>odobrať</i>, kým sa človek znova nezaškolí. Každé rozhodnutie sa zapíše aj s dôvodom a kto ho urobil (tabuľka dole). Udelenie a obnova platia hneď; odobratie od začiatku ďalšej zmeny: majster plánuje miesta na začiatku zmeny, takže nikoho neodvolá od bežiaceho stroja. Operátor, ktorému odobrali kvalifikáciu jeho vlastného miesta, ide na preškolenie a jeho miesto sa obsadí ako pri absencii, kým mu ju znova neudelia. Závod rozhodnutia prevezme a platia aj po každom novom behu závodu.") }}
+    {{ bi("<b>Bench strength</b> (bottom right): how many qualified operators every skill has in each shift. A skill with only a few people is a risk: one sick person and a line stands. That is where the training plan starts.",
+          "<b>Zastupiteľnosť</b> (vpravo dole): koľko kvalifikovaných operátorov má každá kvalifikácia v každej zmene. Kvalifikácia s pár ľuďmi je riziko: jeden chorý a linka stojí. Tam sa začína plán školení.") }}
+  </div>
+{% endcall %}
+
+<div class="kpis" id="people-kpis"></div>
+<div class="grid-2">
+  <div class="stack">
+    <div class="panel">
+      <div class="page-head" style="margin:0 0 6px"><h3 style="margin:0">{{ bi_inline("Qualification matrix", "Kvalifikačná matica") }}</h3><div class="spacer"></div>
+        <div class="segmented" id="people-shift" role="group"><button type="button" data-s="now">{{ bi_inline("This shift", "Táto zmena") }}</button><button type="button" data-s="A">A</button><button type="button" data-s="B">B</button><button type="button" data-s="C">C</button></div></div>
+      <div class="table-wrap" id="people-matrix"></div>
+    </div>
+  </div>
+  <div class="stack">
+    <div class="panel"><h3>{{ bi_inline("This shift: absent and cover", "Táto zmena: neprítomní a zástup") }}</h3><div id="people-today"></div></div>
+    <div class="panel"><h3>{{ bi_inline("Certificates that run out", "Certifikáty, ktoré vypršia") }}</h3><div class="table-wrap" id="people-expiring"></div></div>
+    <div class="panel"><h3>{{ bi_inline("Bench strength · qualified operators", "Zastupiteľnosť · kvalifikovaní operátori") }}</h3><div class="table-wrap" id="people-bench"></div></div>
+  </div>
+</div>
+<div class="panel" style="margin-top:16px"><h3>{{ bi_inline("Decisions about qualifications", "Rozhodnutia o kvalifikáciách") }}</h3><div class="table-wrap" id="people-history"></div></div>
+<dialog class="set-dialog panel" id="q-dialog"></dialog>
+{% endblock %}
+{% block scripts %}<script src="/static/people.js?v={{ version }}"></script>{% endblock %}

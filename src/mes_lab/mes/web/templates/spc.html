@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% from "_help.html" import bi, bi_inline, help %}
+{% block title %}SPC{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>SPC</h1>
+  <span class="sub">{{ bi_inline("Statistical process control: is every measured process where it should be?", "Štatistická regulácia procesu: je každý meraný proces tam, kde má byť?") }}</span>
+</div>
+
+{% call help("spc") %}
+  <div class="cols">
+    {{ bi("<b>What it is:</b> the machines measure every piece (paste volume, oven peak temperature, press-fit force, coating weight, screw torque, supply current at the end-of-line test). Once an hour the MES takes the first five pieces as a <b>subgroup</b> and draws two charts: <b>X̄</b> (their average) and <b>R</b> (the range between the highest and the lowest). The green band is where a capable process stays (the control limits, ±3σ of an average of five); the dashed lines far out are the specification limits of the product.",
+          "<b>Čo to je:</b> stroje merajú každý kus (objem pasty, špičkovú teplotu v peci, silu lisovania, váhu laku, moment skrutky, odber prúdu pri záverečnom teste). Raz za hodinu MES vezme prvých päť kusov ako <b>podskupinu</b> a nakreslí dva grafy: <b>X̄</b> (ich priemer) a <b>R</b> (rozpätie medzi najvyšším a najnižším). Zelený pás je tam, kde ostáva spôsobilý proces (regulačné medze, ±3σ priemeru z piatich); čiarkované čiary ďaleko vonku sú tolerancie výrobku.") }}
+    {{ bi("<b>The rules:</b> R1 one point beyond 3σ (something changed suddenly), R2 two of three beyond 2σ on one side (the process moved), R5 seven points in a row rising or falling (a trend: wear, a clogging stencil, a drifting heater). The machines in this plant really wander off with use: the torque of a screwdriver grows as its clutch wears, the paste volume falls as the stencil clogs; a repair, the planned maintenance or an adjustment set them back.",
+          "<b>Pravidlá:</b> R1 jeden bod za 3σ (niečo sa náhle zmenilo), R2 dva z troch za 2σ na jednej strane (proces sa posunul), R5 sedem bodov za sebou stúpa alebo klesá (trend: opotrebenie, zanášajúca sa šablóna, ohrev, ktorý uteká). Stroje v tomto závode naozaj s prevádzkou utekajú: moment skrutkovača rastie, ako sa opotrebúva spojka, objem pasty klesá, ako sa zanáša šablóna; oprava, plánovaná údržba alebo nastavenie ich vrátia späť.") }}
+    {{ bi("<b>The reaction</b> (like a control plan): an alarm stops the machine and a technician adjusts it (state <i>maintenance</i>, reason <i>SPC adjustment</i>). Only when a part may be bad (R1, or a value outside the specification) the MES also puts a <b>hold</b> on what the station made since the last good subgroup; after the adjustment it judges the held units by their own measured values: all inside the specification, the hold is released by itself, otherwise it waits on the <a href='/holds'>Holds</a> page for a person.",
+          "<b>Reakcia</b> (ako v kontrolnom pláne): alarm zastaví stroj a technik ho nastaví (stav <i>údržba</i>, dôvod <i>nastavenie po SPC alarme</i>). Len keď môže byť kus zlý (R1 alebo hodnota mimo tolerancie), dá MES aj <b>blokáciu</b> na to, čo stanica vyrobila od poslednej dobrej podskupiny; po nastavení posúdi zablokované kusy podľa ich vlastných nameraných hodnôt: všetky v tolerancii, blokácia sa uvoľní sama, inak čaká na stránke <a href='/holds'>Holds</a> na človeka.") }}
+  </div>
+{% endcall %}
+
+<div class="grid-2 spc">
+  <div class="stack">
+    <div class="panel" id="spc-chart"><p class="muted">{{ bi_inline("Pick a characteristic on the right.", "Vpravo vyber charakteristiku.") }}</p></div>
+    <div class="panel"><h3>{{ bi_inline("Alarms", "Alarmy") }}</h3><div class="table-wrap" id="spc-alarms"></div></div>
+  </div>
+  <div class="stack">
+    <div class="panel"><h3>{{ bi_inline("Characteristics", "Charakteristiky") }}</h3><div class="table-wrap" id="spc-list"></div></div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}<script src="/static/spc.js?v={{ version }}"></script>{% endblock %}

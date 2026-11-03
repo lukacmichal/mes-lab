@@ -19,7 +19,11 @@
 # manual: a person does the work (the others are machines; see the automation degree on the KPI page)
 # interlock: the station checks every item in with the MES before working on it
 #   (route, holds, quality status) and gets serial numbers from it.
-# measurements: process values logged with every record (mean, sd, limits).
+# measurements: process values logged with every record (mean, sd, limits). spc: the MES keeps a control
+#   chart of it; drift_per_h: the process wanders off this much per operating hour (wear, clogging) until
+#   a repair, the planned maintenance or an adjustment after an SPC alarm sets it back.
+# verification: a tester checks itself with a master sample at the start of every shift; the MES lets it
+#   test production only after a passed check (duration_s, fail_p: the check fails, maintenance comes).
 
 station_types:
 
@@ -51,6 +55,7 @@ station_types:
     name: Solder paste printer
     tag: PRN
     kind: process
+    interlock: true           # the MES checks the paste on the stencil (open time) before every print
     cycle_cv: 0.03
     mtbf_h: 30
     mttr_min: 25
@@ -68,7 +73,7 @@ station_types:
     tag: SPI
     kind: inspection
     measurements:
-      paste_volume_pct: {mean: 100, sd: 5, lsl: 70, usl: 130, unit: '%'}
+      paste_volume_pct: {mean: 100, sd: 5, lsl: 70, usl: 130, unit: '%', spc: true, drift_per_h: -0.25}
     cycle_cv: 0.02
     mtbf_h: 120
     mttr_min: 15
@@ -122,7 +127,7 @@ station_types:
     tag: OVN
     kind: oven
     measurements:
-      peak_temp_c: {mean: 245, sd: 1.5, lsl: 235, usl: 255, unit: degC}
+      peak_temp_c: {mean: 245, sd: 1.5, lsl: 235, usl: 255, unit: degC, spc: true, drift_per_h: 0.03}
       time_above_liquidus_s: {mean: 62, sd: 3, lsl: 45, usl: 90, unit: s}
     transit_s: 330
     capacity: 8
@@ -199,7 +204,7 @@ station_types:
     tag: PRS
     kind: process
     measurements:
-      press_force_kn: {mean: 2.4, sd: 0.08, lsl: 2.0, usl: 2.8, unit: kN}
+      press_force_kn: {mean: 2.4, sd: 0.08, lsl: 2.0, usl: 2.8, unit: kN, spc: true, drift_per_h: 0.004}
     cycle_cv: 0.03
     mtbf_h: 50
     mttr_min: 30
@@ -214,7 +219,7 @@ station_types:
     tag: CTR
     kind: process
     measurements:
-      coating_weight_mg: {mean: 120, sd: 6, lsl: 100, usl: 140, unit: mg}
+      coating_weight_mg: {mean: 120, sd: 6, lsl: 100, usl: 140, unit: mg, spc: true, drift_per_h: -0.3}
     cycle_cv: 0.03
     mtbf_h: 40
     mttr_min: 30
@@ -282,6 +287,7 @@ station_types:
     tag: ICT
     kind: inspection
     interlock: true
+    verification: {duration_s: 150, fail_p: 0.03}
     cycle_cv: 0.02
     mtbf_h: 50
     mttr_min: 30
@@ -308,7 +314,7 @@ station_types:
     tag: SCR
     kind: process
     measurements:
-      torque_nm: {mean: 1.2, sd: 0.03, lsl: 1.05, usl: 1.35, unit: Nm}
+      torque_nm: {mean: 1.2, sd: 0.03, lsl: 1.05, usl: 1.35, unit: Nm, spc: true, drift_per_h: 0.003}
       angle_deg: {mean: 720, sd: 12, lsl: 660, usl: 780, unit: deg}
     cycle_cv: 0.04
     mtbf_h: 40
@@ -337,8 +343,9 @@ station_types:
     tag: EOL
     kind: inspection
     interlock: true
+    verification: {duration_s: 120, fail_p: 0.03}
     measurements:
-      supply_current_ma: {mean: 85, sd: 2.5, lsl: 75, usl: 95, unit: mA}
+      supply_current_ma: {mean: 85, sd: 2.5, lsl: 75, usl: 95, unit: mA, spc: true}
     cycle_cv: 0.03
     mtbf_h: 50
     mttr_min: 30

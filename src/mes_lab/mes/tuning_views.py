@@ -27,9 +27,12 @@ QUEUE_MAX = 4
 KEEP = 200
 
 
-def _key(knobs: dict, hours: int) -> str:
-    # a new version of the plant may run differently: its results are its own
-    return json.dumps({"k": {k: knobs[k] for k in sorted(knobs)}, "h": hours, "v": __version__}, sort_keys=True)
+def _key(knobs: dict, hours: int, rev: int | None = None) -> str:
+    # a new version of the plant, or other settings, may run differently: their results are their own
+    key = {"k": {k: knobs[k] for k in sorted(knobs)}, "h": hours, "v": __version__}
+    if rev:
+        key["s"] = rev
+    return json.dumps(key, sort_keys=True)
 
 
 def _summary(result: dict) -> dict:
@@ -50,6 +53,8 @@ def _summary(result: dict) -> dict:
 class Tuning:
     def __init__(self, store: Path | None = None, workers: int = 1):
         self.base = tuning.defaults()
+        self.settings_rev: int | None = None        # the revision of the settings page the runs are made with
+        self.overrides: dict = {}
         self.store = store
         self.results: dict[str, dict] = {}
         self.jobs: dict[int, dict] = {}
@@ -62,13 +67,22 @@ class Tuning:
         self._running: int | None = None
         self._load()
 
+    def use_settings(self, rev: int | None, overrides: dict | None) -> None:
+        """Tune the plant with the settings in force (a revision of the settings page)."""
+        from mes_lab import settings
+
+        with self._lock:
+            self.settings_rev = rev
+            self.overrides = dict(overrides or {})
+            self.base = tuning.defaults(settings.effective_raw(self.overrides))
+
     # ------------------------------------------------------------------ the store
     def _load(self) -> None:
         if self.store and self.store.exists():
             try:
                 for row in json.loads(self.store.read_text(encoding="utf-8")):
                     if row.get("version") == __version__:
-                        self.results[_key(row["knobs"], row["hours"])] = row
+                        self.results[_key(row["knobs"], row["hours"], row.get("settings_rev"))] = row
             except (OSError, ValueError, KeyError) as exc:
                 log.warning("cannot read %s: %s", self.store, exc)
 
@@ -88,7 +102,7 @@ class Tuning:
     def submit(self, knobs: dict, hours: int, by: str) -> dict:
         knobs = tuning.clean(knobs, self.base)
         hours = hours if hours in tuning.HOURS else 12
-        key = _key(knobs, hours)
+        key = _key(knobs, hours, self.settings_rev)
         with self._lock:
             if key in self.results:
                 return {"state": "done", "result": self.results[key]}
@@ -104,7 +118,8 @@ class Tuning:
                 raise RuntimeError("a few scenarios are waiting already; try again in a minute")
             jid = next(self._ids)
             self.jobs[jid] = {"id": jid, "key": key, "knobs": knobs, "hours": hours, "state": "queued",
-                              "by": by, "queued": now, "started": None}
+                              "by": by, "queued": now, "started": None, "settings_rev": self.settings_rev,
+                              "overrides": dict(self.overrides)}
             self.queue.append(jid)
             self.started.append(now)
             self._next()
@@ -120,7 +135,7 @@ class Tuning:
         if self._pool is None:
             # a fresh interpreter, not a fork of the MES (which holds database connections)
             self._pool = ProcessPoolExecutor(max_workers=self._workers, mp_context=multiprocessing.get_context("spawn"))
-        future = self._pool.submit(tuning.run, job["knobs"], job["hours"])
+        future = self._pool.submit(tuning.run, job["knobs"], job["hours"], 1, job["overrides"] or None)
         future.add_done_callback(lambda f, jid=jid: self._done(jid, f))
 
     def _done(self, jid: int, future) -> None:
@@ -130,6 +145,7 @@ class Tuning:
                 result = _summary(future.result())
                 result["by"] = job["by"]
                 result["version"] = __version__
+                result["settings_rev"] = job["settings_rev"]
                 self.results[job["key"]] = result
                 job["state"] = "done"
                 self._save()
@@ -166,9 +182,10 @@ class Tuning:
 
     def board(self, hours: int | None = None) -> dict:
         with self._lock:
-            rows = [r for r in self.results.values() if hours is None or r["hours"] == hours]
+            rows = [r for r in self.results.values() if (hours is None or r["hours"] == hours)
+                    and r.get("settings_rev") == self.settings_rev]
             rows.sort(key=lambda r: -(r.get("margin_per_h") or -1e9))
-            base = self.results.get(_key(self.base, hours or 12))
+            base = self.results.get(_key(self.base, hours or 12, self.settings_rev))
             return {"knobs": {k: {"min": lo, "max": hi, "what": what} for k, (lo, hi, what) in tuning.KNOBS.items()},
                     "base": self.base, "hours": list(tuning.HOURS), "baseline": base, "best": rows[:12],
                     "runs": len(self.results), "busy": self._running is not None, "waiting": len(self.queue)}

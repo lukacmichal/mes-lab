@@ -58,7 +58,7 @@ def staff_per_shift(model: PlantModel, seats: int) -> dict[str, dict[str, int]]:
     out = {}
     for code, s in model.crew.shifts.items():
         out[code] = {"OPERATOR": seats + s.relief, "MAINTENANCE": s.maintenance, "IT": s.it,
-                     "FOREMAN": s.foreman, "LOGISTICS": s.logistics, "MANAGER": s.manager}
+                     "FOREMAN": s.foreman, "LOGISTICS": s.logistics, "MANAGER": s.manager, "MATERIAL": s.material}
     return out
 
 

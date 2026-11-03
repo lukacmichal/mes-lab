@@ -31,7 +31,7 @@ LANE = 22         # distance of the two lanes of a double cell from the spine
 SLOT = 12         # one conveyor place of a buffer
 BUF_PAD = 8
 ROW = 150         # distance between the spines of two rows: an aisle with two walking lanes and a robot lane
-TOP = 104         # room for area titles and line labels
+TOP = 134         # room for the head-count board above the halls, area titles and line labels
 SMT_LEFT = 194    # goods-in warehouse -> first SMT machine: robot trunk, team desks, walkway trunk
 FA_LEFT = 216     # supermarket -> first final assembly machine: the same
 COL_GAP = 60      # end of the longest final assembly line -> collector belt to packing
@@ -93,6 +93,7 @@ class Layout:
         self.buildings: list[dict] = []
         self.zones: list[dict] = []
         self.world = {"w": 0, "h": 0}
+        self.hall: dict = {}                   # the outer wall (a polygon) and the truck gates in it
         # the people side (layout_crew.py)
         self.spots: dict[str, tuple[float, float]] = {}
         self.seats: dict[str, dict] = {}
@@ -106,6 +107,8 @@ class Layout:
         self.amr_lanes: list = []
         self.board: dict = {}
         self.corner: dict = {}                 # the logistics corner east of the staff building
+        self.smt_store: dict = {}              # SMT reel racks, the paste fridge and the thaw cabinet
+        self.receiving: dict = {}              # goods receipt of the SMT reels south of the goods-in warehouse
         self.walk: layout_crew.Walkways | None = None
         # the robots (AMR): their lanes and stops, the NOK totes at the machines, their depot
         self.amr: layout_crew.Walkways | None = None
@@ -146,7 +149,8 @@ class Layout:
                 "routes": {key: route.as_dict() for key, route in self.routes.items()},
                 "geometry": {"H": H, "LANE": LANE, "SLOT": SLOT},
                 "rooms": self.rooms, "furniture": self.furniture, "desks": self.desks,
-                "terminals": self.terminals, "bays": self.bays, "board": self.board, "corner": self.corner,
+                "terminals": self.terminals, "bays": self.bays, "board": self.board, "corner": self.corner, "hall": self.hall,
+                "smt_store": self.smt_store, "receiving": self.receiving,
                 "walkways": self.walkways, "nok": self.nok, "docks": self.docks, "depot": self.depot,
                 "amr_lanes": self.amr_lanes, "crossings": self.crossings, "racks": self.racks,
                 "amr": {"robots": self.model.amr.robots, "speed": self.model.amr.speed,
@@ -254,6 +258,33 @@ class Layout:
         # --- people: staff building, desks, walkways, seats, the dock
         layout_crew.build(self, {"spine": spine, "smt": smt, "fa": fa, "pack": pack, "fgw": fgw, "rpr": rpr,
                                  "sm": sm, "gi": gi, "x_col": x_col, "y_rooms": y_rooms})
+        self._hall()
+
+    def _hall(self) -> None:
+        """The outer wall of the plant: one hall around everything, the staff building's south wall is its
+        street side (with the entrance). The two truck yards stay outside: the supplier bay south-west of the
+        goods-in warehouse and the dock under the finished goods warehouse; their gates are in the wall."""
+        x0, y0, x1 = 4, 0, self.world["w"] - 6
+        staff = next(b for b in self.buildings if b["id"] == "STAFF")
+        bottom = staff["y"] + staff["h"]
+        pts = [(x0, y0), (x1, y0)]
+        gates = []
+        if self.bays:
+            dock_y = self.bays[0]["rear_y"] - 6
+            left = min(b["x"] for b in self.bays) - self.bays[0]["trailer_w"] / 2 - 12
+            pts += [(x1, dock_y), (left, dock_y), (left, bottom)]
+            gates += [{"x": b["x"], "y": dock_y, "w": b["trailer_w"] + 4} for b in self.bays]
+        else:
+            pts += [(x1, bottom)]
+        recv = self.receiving.get("bay") if self.receiving else None
+        if recv:
+            recv_y = recv["rear_y"] - 4
+            right = recv["x"] + recv["trailer_w"] / 2 + 2           # the handler stands just inside, by the trailer
+            pts += [(right, bottom), (right, recv_y), (x0, recv_y)]
+            gates.append({"x": recv["x"], "y": recv_y, "w": recv["trailer_w"] + 4})
+        else:
+            pts += [(x0, bottom)]
+        self.hall = {"pts": [[round(x, 1), round(y, 1)] for x, y in pts], "gates": gates}
 
     # ------------------------------------------------------------------ lines
     def _line(self, line: Line, x0: float, spine: float, row: int) -> dict:

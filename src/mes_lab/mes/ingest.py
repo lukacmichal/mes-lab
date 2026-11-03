@@ -96,6 +96,27 @@ def ingest(session: Session, stations: StationDirectory, trace: Trace, payload: 
     run.last_plant_time = max(run.last_plant_time, payload.plant_time)
     run.last_seen_wall = now or datetime.now(UTC)
     run.speed = payload.speed
+    if payload.attendance:
+        known = set(session.scalars(select(db.Employee.id).where(db.Employee.id.in_({a.id for a in payload.attendance}))))
+        rows = [{"shift_start": a.shift_start, "employee_id": a.id, "shift": a.shift, "status": a.status,
+                 "seat": a.seat, "covers": a.covers} for a in payload.attendance if a.id in known]
+        if rows:
+            stmt = insert(db.Attendance).values(rows)
+            session.execute(stmt.on_conflict_do_update(
+                index_elements=["shift_start", "employee_id"],
+                set_={"status": stmt.excluded.status, "seat": stmt.excluded.seat, "covers": stmt.excluded.covers}))
+    if payload.qualifications:
+        known = set(session.scalars(select(db.Employee.id).where(db.Employee.id.in_({q.id for q in payload.qualifications}))))
+        rows = {(q.id, q.skill): {"employee_id": q.id, "skill": q.skill, "valid_until": q.until}
+                for q in payload.qualifications if q.id in known}
+        if rows:
+            stmt = insert(db.Qualification).values(list(rows.values()))
+            session.execute(stmt.on_conflict_do_update(index_elements=["employee_id", "skill"],      # a revocation
+                                                       set_={"valid_until": stmt.excluded.valid_until},  # of the MES
+                                                       where=db.Qualification.revoked.is_(False)))       # stays
+    if trace.material is not None:
+        trace.material.ingest(session, payload.material, payload.plant_time)   # SMT reels and paste jars
+        trace.material.alarms(session, payload.plant_time)                      # floor life ran out on a machine
     commands = trace.pending_commands(session, payload.acks, payload.plant_time)
     session.commit()
     return {"speed": run.desired_speed, "commands": commands}

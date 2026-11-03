@@ -28,6 +28,8 @@ class State(StrEnum):
 EVENT_STATES = frozenset({State.DOWN, State.CHANGEOVER, State.MAINTENANCE})
 
 TRANSFER_S = 4.0  # conveyor transfer through a station that does not work on the item
+OVEN_PROGRAM_S = 60.0  # an oven changeover: the operator loads the new profile, the rest is the oven settling
+BELT_SPEED = 12.0  # plan units per second of the conveyor between two cells of a line (about 0.3 m/s)
 
 
 class PlantClock:
@@ -122,7 +124,7 @@ class Item:
     (or MAG, a magazine of bare panels from the goods-in warehouse)."""
 
     __slots__ = ("id", "kind", "serial", "material", "job", "children", "defects", "found",
-                 "bad_mark", "done", "return_cell", "repairs", "washed", "qty", "at")
+                 "bad_mark", "done", "return_cell", "repairs", "washed", "qty", "at", "belt")
 
     def __init__(self, kind: str, serial: str | None, material: str, job: Job | None = None,
                  children: list[Item] | None = None):
@@ -141,6 +143,7 @@ class Item:
         self.repairs = 0
         self.washed = False
         self.at = 0.0              # when it got where it is (robots, racks, totes: the live view shows it then)
+        self.belt: tuple[float, float] | None = None   # riding the conveyor to the next cell: (left, arrives)
 
     @property
     def label(self) -> str:

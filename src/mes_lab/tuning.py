@@ -25,7 +25,7 @@ KNOBS = {
     "robots": (1, 8, "robots (AMR) for repairs, quarantine, parts and boxes"),
     "maintenance_day": (1, 3, "maintenance technicians on the morning and the afternoon shift"),
     "maintenance_night": (1, 2, "maintenance technicians on the night shift"),
-    "relief": (2, 8, "relief operators per shift (they sit in during the breaks)"),
+    "relief": (2, 14, "relief operators per shift (they take the seats of the absent and sit in during the breaks)"),
     "kit_bins": (2, 6, "bins of parts in the rack at the loader of final assembly"),
     "fa_buffer": (1, 6, "places on the conveyor between two cells of final assembly"),
 }
@@ -63,13 +63,12 @@ def clean(knobs: dict, base: dict) -> dict:
     return out
 
 
-def model_for(knobs: dict | None, config_dir=None):
-    """The plant of the live simulation: as configured (knobs None), or with the knobs of a scenario."""
-    from pathlib import Path
+def model_for(knobs: dict | None, config_dir=None, overrides: dict | None = None):
+    """The plant of the live simulation: as configured (knobs None), or with the knobs of a scenario; both
+    with the changes of the settings page (overrides, see mes_lab.settings)."""
+    from mes_lab import settings
 
-    from mes_lab import DEFAULT_CONFIG_DIR
-
-    raw = _read(Path(config_dir) if config_dir else DEFAULT_CONFIG_DIR)
+    raw = settings.effective_raw(overrides, config_dir)
     if not knobs:
         return build_model(raw)
     return build(clean(knobs, defaults(raw)), raw)
@@ -92,12 +91,14 @@ def build(knobs: dict, raw: dict | None = None):
     return build_model(raw)
 
 
-def run(knobs: dict, hours: int = 12, seed: int = 1) -> dict:
-    """Run a scenario offline; the KPIs, the costs and how long it took."""
+def run(knobs: dict, hours: int = 12, seed: int = 1, overrides: dict | None = None) -> dict:
+    """Run a scenario offline (on the plant with the changes of the settings page); the KPIs, the costs
+    and how long it took."""
+    from mes_lab import settings
     from mes_lab.sim.runner import run_offline
 
     t0 = time.monotonic()
-    model = build(knobs)
+    model = build(knobs, settings.effective_raw(overrides) if overrides else None)
     plant = run_offline(model, hours, seed=seed, start=datetime(2026, 1, 5, 6, 0, tzinfo=UTC))
     facts = kpi.facts_from_plant(plant)
     result = kpi.compute(model, facts)

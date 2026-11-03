@@ -13,7 +13,7 @@
     robots: ["They carry repairs, quarantine, bins of parts and empty boxes. Too few: the loader waits for parts.", "Vozia opravy, karanténu, zásobníky dielov a prázdne boxy. Primálo: nakladač čaká na diely."],
     maintenance_day: ["Technicians repair breakdowns; when all are busy, the machine waits.", "Technici opravujú poruchy; keď sú všetci zaneprázdnení, stroj čaká."],
     maintenance_night: ["The night shift has fewer people.", "Nočná zmena má menej ľudí."],
-    relief: ["They sit in while the operators have their breaks.", "Sedia na mieste operátorov počas prestávok."],
+    relief: ["They take the seats of the absent (sick, on holiday) and sit in while the operators have their breaks; too few, and machine seats stay empty.", "Obsadia miesta chýbajúcich (chorí, dovolenka) a sedia na mieste operátorov počas prestávok; keď ich je málo, miesta pri strojoch ostanú prázdne."],
     kit_bins: ["More bins give the robots more time, but tie up material at the line.", "Viac zásobníkov dá robotom viac času, ale viaže materiál pri linke."],
     fa_buffer: ["A longer conveyor between cells evens out short stops.", "Dlhší pás medzi bunkami vyrovná krátke výpadky."],
   };
@@ -123,7 +123,7 @@
     const pending = live.pending;
     const head = now ? `${T("runs a scenario", "beží podľa scenára")}: ${diffList(now)}` : T("runs as configured (no scenario)", "beží tak, ako je nastavený (bez scenára)");
     const wait = pending ? `<p class="tune-verdict">${T("Changing: the plant starts a new run with", "Mení sa: závod začína nový beh s")} ${live.wanted.knobs ? diffList(live.wanted.knobs) : T("the plant as configured", "závodom, aký je nastavený")} &hellip;</p>` : "";
-    const can = window.MES_CAN_ACT;
+    const can = MES.can("plant");
     return `<h3>${T("The live plant", "Živý závod")}</h3><p>${head}</p>${wait}
       <p class="muted" style="font-size:12.5px">${T("The live plant is what the Floor and the other pages show. Simulate runs a copy offline; Use in the live plant puts the knobs into the live plant (a new run, the shop floor starts empty).",
         "Živý závod je to, čo ukazuje Floor a ostatné stránky. Prepočítať spustí kópiu mimo neho; Použiť v živom závode dá gombíky do živého závodu (nový beh, dielňa začne prázdna).")}</p>
@@ -135,8 +135,8 @@
     document.getElementById("tune-live").innerHTML = liveHtml();
     const go = document.getElementById("tune-live-go");
     if (go) {
-      go.disabled = !window.MES_CAN_ACT || !knobs;
-      go.title = window.MES_CAN_ACT ? T("The live plant starts a new run with these knobs", "Živý závod začne nový beh s týmito gombíkmi") : T("Sign in first", "Najprv sa prihlás");
+      go.disabled = !MES.can("plant") || !knobs;
+      go.title = MES.can("plant") ? T("The live plant starts a new run with these knobs", "Živý závod začne nový beh s týmito gombíkmi") : T("Sign in first", "Najprv sa prihlás");
     }
   }
   async function loadLive() {

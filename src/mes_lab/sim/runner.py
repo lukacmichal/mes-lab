@@ -7,8 +7,11 @@ import threading
 import time
 import uuid
 from datetime import UTC, datetime
+from datetime import time as dtime
+from zoneinfo import ZoneInfo
 
 from mes_lab import tuning
+from mes_lab.connect import link as connect_link
 from mes_lab.model.schema import PlantModel
 
 from .core import PlantClock, State
@@ -57,6 +60,25 @@ def live_step(plant: PlantSim) -> str:
     return "run"
 
 
+IN_STEP_S = 3600.0     # at midnight the plant may be this far from the real time and keep its day
+
+
+def new_day(plant: PlantSim, tz: ZoneInfo, real_now: datetime | None = None) -> datetime | None:
+    """At midnight of the plant the new day is the real day: the plant ran ahead (a jump, a faster speed) or
+    fell behind (the server was down), so it goes on at midnight of the real day, as a new run. Returns that
+    midnight (aware) when the plant has just passed its midnight into another day than the real one; never
+    while it runs ahead to a time (it gets there first and comes back at the end of that day)."""
+    local = plant.clock.at(plant.env.now).astimezone(tz)
+    day = local.date()
+    seen, plant.day = getattr(plant, "day", None), day
+    if seen is None or seen == day or plant.goto_s is not None:
+        return None
+    real = (real_now or datetime.now(UTC)).astimezone(tz)
+    if day == real.date() or abs((local - real).total_seconds()) <= IN_STEP_S:
+        return None                     # the right day (the hours may differ), or just beside the real midnight
+    return datetime.combine(real.date(), dtime(0, 0), tzinfo=tz)
+
+
 def run_live(model: PlantModel, mes_url: str, speed: float, seed: int = 1,
              token: str | None = None, stop: threading.Event | None = None,
              client: MesClient | None = None, config_dir=None) -> PlantSim:
@@ -66,41 +88,72 @@ def run_live(model: PlantModel, mes_url: str, speed: float, seed: int = 1,
     client = client or MesClient(mes_url, token)
     stop = stop or threading.Event()
     plant = None
+    link = connect_link.from_env(model)          # OPC UA server of the machines, the edge's publisher into the UNS
+    tz = ZoneInfo(model.plant.timezone)
+    midnight = None
     try:
         while not stop.is_set():
             wish = client.scenario()
             knobs = wish.get("knobs") or None
-            built = model if not knobs else tuning.model_for(knobs, config_dir)
-            plant = start_live_plant(built, client, seed, plant.speed if plant is not None else speed, knobs=knobs)
+            chosen = wish.get("settings") or {}
+            overrides = chosen.get("overrides") or None
+            built = model if not knobs and not overrides else tuning.model_for(knobs, config_dir, overrides)
+            plant = start_live_plant(built, client, seed, plant.speed if plant is not None else speed, knobs=knobs,
+                                     plant_start=midnight, settings_rev=chosen.get("revision") if overrides else None)
             plant.scenario_version = wish.get("version")
+            midnight = None
             while not stop.is_set() and not plant.rebuild:
                 live_step(plant)
+                if link is not None:
+                    link.update(plant)
+                midnight = new_day(plant, tz)
+                if midnight is not None:
+                    plant.rebuild = True
             if plant.rebuild:
                 plant.edge.flush()
-                log.info("the MES asks for another plant: new run")
+                if midnight is not None:
+                    log.info("midnight of the plant at %s: the new day is the real one, from %s",
+                             plant.clock.at(plant.env.now).astimezone(tz), midnight)
+                else:
+                    log.info("the MES asks for another plant (a scenario or new settings): new run")
     except KeyboardInterrupt:
         pass
     finally:
         if plant is not None:
             plant.edge.flush()
             log.info("simulation stopped at plant time %s", plant.clock.at(plant.env.now))
+        if link is not None:
+            link.close()
     return plant
 
 
 def start_live_plant(model: PlantModel, client: MesClient, seed: int,
-                     speed: float | None, knobs: dict | None = None, **kwargs) -> PlantSim:
+                     speed: float | None, knobs: dict | None = None, plant_start: datetime | None = None,
+                     settings_rev: int | None = None, **kwargs) -> PlantSim:
     """Register a new run with the MES and build a plant that reports to it.
-    speed=None gives a plant that runs as fast as possible (tests)."""
+    speed=None gives a plant that runs as fast as possible (tests). `plant_start`: begin at this time (the
+    midnight of the real day) instead of after the last run."""
     run_id = str(uuid.uuid4())
     stock = initial_stock_serials(model, run_id)
-    registration = client.register_run(run_id, seed, speed, stock, lines=sorted(model.lines), knobs=knobs)
+    registration = client.register_run(run_id, seed, speed, stock, lines=sorted(model.lines), knobs=knobs,
+                                       plant_start=plant_start.isoformat() if plant_start else None,
+                                       settings_rev=settings_rev)
     start = datetime.fromisoformat(registration["plant_start"])
-    log.info("run %s registered, plant time starts at %s, speed %sx%s", run_id, start, speed,
-             f", scenario {knobs}" if knobs else "")
-    return PlantSim(model, PlantClock(start), MesDispatcher(client, run_id), seed=seed,
-                    run_id=run_id, sink=MesSink(client), speed=speed,
-                    trace=lambda plant: MesTrace(plant, client, run_id),
-                    initial_serials=stock, **kwargs)
+    log.info("run %s registered, plant time starts at %s, speed %sx%s%s", run_id, start, speed,
+             f", scenario {knobs}" if knobs else "", f", settings revision {settings_rev}" if settings_rev else "")
+    plant = PlantSim(model, PlantClock(start), MesDispatcher(client, run_id), seed=seed,
+                     run_id=run_id, sink=MesSink(client), speed=speed,
+                     trace=lambda plant: MesTrace(plant, client, run_id),
+                     initial_serials=stock, **kwargs)
+    try:                                                      # the people and their qualifications, the reels in the store
+        roster = client.register_people(run_id, plant.crew.roster_out())
+        if roster.get("skills"):                              # what people decided in the MES wins
+            plant.crew.apply_skills(roster["skills"].get("items") or [])
+            plant.skills_version = roster["skills"].get("version")
+        client.register_reels(run_id, plant.receiving.stock_out())
+    except Exception as exc:  # noqa: BLE001 - an older MES: the plant runs without it
+        log.warning("cannot report the people to the MES: %s", exc)
+    return plant
 
 
 def summary(plant: PlantSim) -> str:

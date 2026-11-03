@@ -1,5 +1,6 @@
 """MES API, and the simulation driving the MES end to end."""
 
+import os
 import uuid
 from datetime import datetime, timedelta
 
@@ -48,7 +49,8 @@ def test_migrations_match_models(app):
 
 def test_dispatch_plans_final_assembly_and_smt_replenishment(client):
     mes, run_id, start = _start(client)
-    job = mes.next_job(run_id, "FA-01", start.isoformat())
+    job = (mes.next_job(run_id, "FA-01", start.isoformat())          # the orders of the ERP are on their way
+           or mes.next_job(run_id, "FA-01", (start + timedelta(minutes=1)).isoformat()))
     assert job["material"] == "BCM-200" and job["operation"] == "FA"
     orders = client.get("/api/v1/orders").json()["orders"]
     assert any(o["material"] == "BCM-200" for o in orders)
@@ -190,6 +192,9 @@ def _check_in(client, run_id, station, t, serial=None, consume=None, job_id=None
 def test_route_holds_and_repair_are_enforced(app, client):
     mes, run_id, t = _start(client, stock={"PCBA-BCM-200": ["SB1", "SB2"]})
     job = mes.next_job(run_id, "FA-01", t.isoformat())
+    for tester in ("FA-01-ICT", "FA-01-EOL1", "FA-01-EOL2"):          # the testers passed their master sample check
+        assert client.post("/api/v1/trace/verification", json={"run_id": run_id, "station": tester,
+                                                               "plant_time": t.isoformat(), "result": "PASS"}).status_code == 200
 
     # a board becomes a product unit at the loader, with a serial from the MES
     start = _check_in(client, run_id, "FA-01-LDR", t, consume="SB1", job_id=job["id"])
@@ -245,6 +250,57 @@ def test_route_holds_and_repair_are_enforced(app, client):
     assert client.get(f"/api/v1/trace/units/{unit}").json()["unit"]["status"] == "SCRAPPED"
 
 
+def test_the_mes_refuses_a_person_without_a_valid_qualification(app, client):
+    mes, run_id, t = _start(client, stock={"PCBA-BCM-200": ["SB1"]})
+    job = mes.next_job(run_id, "FA-01", t.isoformat())
+    client.post("/api/v1/edge/ingest", json={"run_id": run_id, "plant_time": t.isoformat()})
+    board = client.get("/api/v1/people").json()
+    shift, start = board["clock"]["shift"]["code"], board["shift_start"]
+    later = (t + timedelta(days=200)).isoformat()
+    mes.register_people(run_id, [
+        {"id": 9001, "name": "Ján Malý", "role": "OPERATOR", "shift": shift, "skills": {"SMT": None}},
+        {"id": 9002, "name": "Eva Malá", "role": "OPERATOR", "shift": shift, "sex": "w", "home": "FA-01:LOADER",
+         "skills": {"FA": None, "INSPECTION": (t - timedelta(days=1)).isoformat()}},
+        {"id": 9003, "name": "Peter Veľký", "role": "OPERATOR", "shift": shift,
+         "skills": {"FA": (t - timedelta(hours=1)).isoformat(), "REPAIR": later}},
+    ])
+
+    def load(operator):
+        return client.post("/api/v1/trace/check-in", json={
+            "run_id": run_id, "station": "FA-01-LDR", "plant_time": t.isoformat(), "consume": "SB1",
+            "job_id": job["id"], "operator": operator}).json()
+
+    units = _count(app, db.Unit)
+    refused = load(9001)                                       # SMT only: not for the final assembly
+    assert refused["ok"] is False and refused["reason"] == "NOT_QUALIFIED" and "FA" in refused["message"]
+    assert load(9003)["reason"] == "NOT_QUALIFIED"               # the certificate ran out an hour ago
+    assert _count(app, db.Unit) == units                         # no unit made, the board not quarantined
+    assert _count(app, db.Unit, db.Unit.status == "QUARANTINE") == 0
+
+    # the certificate is renewed (the course): the plant reports it with the next ingest
+    client.post("/api/v1/edge/ingest", json={"run_id": run_id, "plant_time": t.isoformat(),
+                                             "qualifications": [{"id": 9003, "skill": "FA", "until": later}]})
+    assert load(9003)["ok"]
+    assert load(None).get("reason") != "NOT_QUALIFIED"          # nobody logged in: a machine on its own
+
+    # who came to the shift, who covers whom
+    client.post("/api/v1/edge/ingest", json={"run_id": run_id, "plant_time": t.isoformat(), "attendance": [
+        {"shift_start": start, "shift": shift, "id": 9001, "status": "SICK"},
+        {"shift_start": start, "shift": shift, "id": 9002, "status": "PRESENT", "seat": "FA-01:LOADER"},
+        {"shift_start": start, "shift": shift, "id": 9003, "status": "PRESENT", "seat": "FA-02:LOADER", "covers": 9001},
+        {"shift_start": start, "shift": shift, "id": 77777, "status": "PRESENT"},      # unknown: left out
+    ]})
+    board = client.get("/api/v1/people").json()
+    assert board["today"]["present"] == 2 and board["today"]["sick"] == 1
+    people = {p["id"]: p for p in board["people"]}
+    assert people[9003]["covers_name"] == "Ján Malý" and people[9003]["seat"] == "FA-02:LOADER"
+    assert people[9002]["skills"]["INSPECTION"]["state"] == "expired"
+    assert people[9003]["skills"]["REPAIR"]["state"] == "ok" and people[9003]["skills"]["FA"]["state"] == "ok"
+    assert [x["id"] for x in board["expiring"]] == [9002]
+    assert board["bench"][shift] == {"SMT": 1, "FA": 2, "REPAIR": 1}
+    assert client.get("/people").status_code == 200
+
+
 def test_packing_issues_boxes_and_sscc(app, client):
     mes, run_id, t = _start(client, stock={"PCBA-BMS-12S": [f"SX{i:02d}" for i in range(13)]})
     job = mes.next_job(run_id, "FA-04", t.isoformat())
@@ -290,7 +346,9 @@ def test_packing_issues_boxes_and_sscc(app, client):
 
 def test_simulation_drives_the_mes(app, client, model):
     mes = MesClient(client=client)
-    plant = start_live_plant(model, mes, seed=7, speed=None, sim_flush_s=180)
+    # a fixed plant time (it used to start at the real now: the shift and the breaks depended on the hour of the test)
+    plant = start_live_plant(model, mes, seed=7, speed=None, sim_flush_s=180,
+                             plant_start=datetime.fromisoformat(os.environ.get("MES_TEST_START", "2026-01-05T08:00:00+01:00")))
     plant.env.run(until=4 * 3600)
     plant.edge.flush()
 
@@ -317,6 +375,19 @@ def test_simulation_drives_the_mes(app, client, model):
         repaired = s.scalar(select(func.count()).select_from(db.Defect).where(db.Defect.status == "REPAIRED"))
         assert repaired > 0
     assert not plant.quarantined
+    # the ERP planned the final assembly and booked the confirmations of the MES
+    with Session(app.state.engine) as s:
+        assert s.scalar(select(func.count()).select_from(db.WorkOrder)
+                        .where(db.WorkOrder.source == "ERP", db.WorkOrder.qty_good > 0)) > 0
+        assert s.scalar(select(func.count()).select_from(db.WorkOrder).where(db.WorkOrder.source != "ERP",
+                        db.WorkOrder.material.has(db.Material.kind == "FG"))) == 0
+        assert s.scalar(select(func.sum(db.ErpProductionOrder.good))) > 0
+        assert s.scalar(select(func.count()).select_from(db.IntegrationMessage)
+                        .where(db.IntegrationMessage.status == "DONE", db.IntegrationMessage.kind == "CONFIRMATION")) > 0
+        # every full box that passed a label printer has its label
+        labelled = s.scalar(select(func.count()).select_from(db.Label).where(db.Label.template == "KLT"))
+        passed = s.scalar(select(func.count()).select_from(db.OperationRecord).where(db.OperationRecord.step == "BOX_LABEL"))
+        assert labelled == passed > 0
 
     # the live picture of the floor travels with the flush, in memory only
     live = client.get("/api/v1/floor").json()
@@ -355,5 +426,28 @@ def test_simulation_drives_the_mes(app, client, model):
     # a restart of the simulation: unfinished orders back in the queue, WIP is lost
     mes2, run2, start2 = _start(client, seed=8)
     with Session(app.state.engine) as s:
+        # the ERP hears that the open orders start again, and the empty warehouse is counted
+        assert s.scalar(select(func.count()).select_from(db.IntegrationMessage).where(
+            db.IntegrationMessage.kind == "CONFIRMATION", db.IntegrationMessage.created_at == start2)) > 0
+        count = s.scalar(select(db.IntegrationMessage).where(db.IntegrationMessage.kind == "STOCK_COUNT")
+                         .order_by(db.IntegrationMessage.created_at.desc()).limit(1))
+        assert set(count.payload["stock"].values()) == {0}
         assert s.scalar(select(func.count()).select_from(db.Job).where(db.Job.status == "ACTIVE")) == 0
         assert s.scalar(select(func.count()).select_from(db.Unit).where(db.Unit.status == "IN_PROCESS")) == 0
+
+    # the new day is the real one: a run that starts back in time undoes what the MES holds from then on (else
+    # the same hour would count twice); what came before stays, and the clock of the pages goes back with it
+    back = (start2 - timedelta(hours=2)).replace(minute=0, second=0)
+    with Session(app.state.engine) as s:
+        before = s.scalar(select(func.count()).select_from(db.Unit).where(db.Unit.created_at < back))
+    reg = MesClient(client=client).register_run(str(uuid.uuid4()), 9, None, {}, plant_start=back.isoformat())
+    assert datetime.fromisoformat(reg["plant_start"]) == back
+    with Session(app.state.engine) as s:
+        for model_, column in ((db.Unit, db.Unit.created_at), (db.OperationRecord, db.OperationRecord.ended_at),
+                               (db.ProductionCount, db.ProductionCount.hour), (db.StationStateTime, db.StationStateTime.hour),
+                               (db.DowntimeEvent, db.DowntimeEvent.start_at), (db.WorkOrder, db.WorkOrder.created_at),
+                               (db.Hold, db.Hold.created_at), (db.Attendance, db.Attendance.shift_start)):
+            assert s.scalar(select(func.count()).select_from(model_).where(column >= back)) == 0, model_.__name__
+        assert s.scalar(select(func.count()).select_from(db.Unit)) == before > 0
+        assert s.scalar(select(func.max(db.SimRun.last_plant_time))) == back
+    assert datetime.fromisoformat(client.get("/api/v1/clock").json()["clock"]["plant_time"]) == back

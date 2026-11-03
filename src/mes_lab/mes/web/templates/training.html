@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% from "_help.html" import bi, bi_inline, help %}
+{% block title %}Training{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>{{ bi_inline("Training · scenarios in the live plant", "Tréning · scenáre v živom závode") }}</h1>
+  <span class="sub">{{ bi_inline("A real fault, the MES to find it, a grade for the containment", "Skutočná porucha, MES na jej nájdenie, hodnotenie ohraničenia") }}</span>
+</div>
+
+{% call help("training") %}
+  <div class="cols">
+    {{ bi("<b>What happens:</b> a scenario makes a real fault happen in the live plant: a bad supplier lot, an AOI that calls every board, a reflow oven that fails with panels inside, or a customer complaint about a shipped unit. The defects it causes stay hidden in the pieces, as they do in a plant: some are found by the testers, some are not. Your job is what a quality engineer does: <b>find the cause</b> with the MES (Quality, Trace, Material, the line pages), <b>stop it</b> and <b>contain</b> every piece it may have reached with holds, before it leaves on a truck. A pallet on hold is not loaded: the label is scanned at the truck.",
+          "<b>Čo sa deje:</b> scenár spôsobí v živom závode skutočnú poruchu: zlú šaržu dodávateľa, AOI, ktorá hlási každú dosku, pretavovaciu pec, ktorá zlyhá s panelmi vo vnútri, alebo reklamáciu zákazníka na odoslaný kus. Chyby, ktoré spôsobí, ostanú v kusoch skryté, ako v skutočnom závode: niektoré nájdu testery, niektoré nie. Tvoja úloha je to, čo robí inžinier kvality: <b>nájsť príčinu</b> pomocou MES (Quality, Trace, Material, stránky liniek), <b>zastaviť ju</b> a blokáciami <b>ohraničiť</b> každý kus, ku ktorému sa mohla dostať, skôr ako odíde na kamióne. Zablokovaná paleta sa nenaloží: štítok sa skenuje pri kamióne.") }}
+    {{ bi("<b>The grade:</b> the MES knows the truth: every piece the fault could have reached (from the genealogy of the lot, what the AOI passed during the storm, what was in the oven, what the screwdriver did in its window). When you say <i>done</i>, each of them is <i>contained</i> (stopped by a hold you made), <i>caught</i> (a tester found it), <i>escaped</i> (left on a truck after the start), <i>open</i> (still in the plant, nothing stops it) or <i>before</i> (left before the start: for a complaint, what must be reported). The score is the share contained or caught of what could still be reached; <i>stopped for nothing</i> counts the good pieces your holds stopped as well. Quick and narrow is the art.",
+          "<b>Hodnotenie:</b> MES pozná pravdu: každý kus, ku ktorému sa porucha mohla dostať (z genealógie šarže, čo AOI prepustila počas búrky, čo bolo v peci, čo skrutkovačka urobila vo svojom okne). Keď povieš <i>hotovo</i>, každý z nich je <i>ohraničený</i> (zastavila ho tvoja blokácia), <i>zachytený</i> (našiel ho tester), <i>unikol</i> (odišiel na kamióne po začiatku), <i>otvorený</i> (ešte v závode a nič ho nezastaví) alebo <i>pred</i> (odišiel pred začiatkom: pri reklamácii to, čo treba nahlásiť). Skóre je podiel ohraničených a zachytených z toho, čo sa ešte dalo zastaviť; <i>zastavené zbytočne</i> počíta dobré kusy, ktoré tvoje blokácie zastavili navyše. Umenie je rýchlo a úzko.") }}
+    {{ bi("<b>Good to know:</b> one scenario at a time, and it runs in the plant everybody sees. A fault nobody fixes ends by itself after 8 plant hours. A faster plant speed (the menu at the top) brings the symptoms sooner, and the trucks too. Starting needs a signed-in user who may run the plant.",
+          "<b>Dobré vedieť:</b> naraz beží jeden scenár a beží v závode, ktorý vidia všetci. Porucha, ktorú nikto neopraví, skončí sama po 8 hodinách času závodu. Vyššia rýchlosť závodu (menu hore) prinesie príznaky skôr, ale aj kamióny. Spustiť ho môže prihlásený používateľ, ktorý smie ovládať závod.") }}
+  </div>
+{% endcall %}
+
+<div id="tr-running"></div>
+<div class="grid-2" style="grid-template-columns:minmax(0,1fr) minmax(0,1fr)" id="tr-cards"></div>
+<div class="panel" style="margin-top:16px"><h3>{{ bi_inline("Graded runs", "Vyhodnotené behy") }}</h3><div class="table-wrap" id="tr-past"></div></div>
+{% endblock %}
+{% block scripts %}<script src="/static/training.js?v={{ version }}"></script>{% endblock %}

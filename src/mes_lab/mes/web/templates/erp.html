@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% from "_help.html" import bi, bi_inline, help %}
+{% block title %}ERP{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>{{ bi_inline("ERP and the interface", "ERP a rozhranie") }}</h1>
+  <span class="sub">{{ bi_inline("Customer call-offs, production orders, the stock in the books, the messages between the ERP and the MES",
+                                   "Odvolávky zákazníkov, výrobné zákazky, sklad v účtovníctve, správy medzi ERP a MES") }}</span>
+  <div class="spacer"></div>
+  <span id="erp-state"></span>
+</div>
+
+{% call help("erp") %}
+  <div class="cols">
+    {{ bi("<b>The ERP</b> is the office system (here a fake one, as simple as the plant needs): it knows the customers, what they want and when, and the stock in its books. It does not know the machines or serial numbers. <b>Call-offs:</b> every customer sends each morning at " ~ rules.call_offs.at ~ " the quantities it wants of each product for the next " ~ rules.call_offs.days ~ " days. The first " ~ rules.call_offs.firm_days ~ " days are <b>firm</b> (bold), the later ones a <i>forecast</i> that tomorrow's call-off may change. <b>MRP</b> (every " ~ rules.mrp.every_min ~ " min): what is due within " ~ rules.mrp.horizon_days ~ " days and what is late, minus what was shipped, the stock and what the open production orders will still bring, gets new production orders in the lot sizes of the product.",
+          "<b>ERP</b> je kancelársky systém (tu falošný, taký jednoduchý, ako závod potrebuje): pozná zákazníkov, čo chcú a kedy, a sklad vo svojom účtovníctve. Nepozná stroje ani sériové čísla. <b>Odvolávky:</b> každý zákazník pošle každé ráno o " ~ rules.call_offs.at ~ " množstvá, ktoré chce od každého výrobku na ďalších " ~ rules.call_offs.days ~ " dní. Prvé " ~ rules.call_offs.firm_days ~ " dni sú <b>pevné</b> (tučne), ďalšie <i>predpoveď</i>, ktorú zajtrajšia odvolávka môže zmeniť. <b>MRP</b> (každých " ~ rules.mrp.every_min ~ " min): čo treba dodať do " ~ rules.mrp.horizon_days ~ " dní a čo mešká, mínus čo odišlo, sklad a čo ešte prinesú otvorené výrobné zákazky, dostane nové výrobné zákazky po dávkach výrobku.") }}
+    {{ bi("<b>The interface:</b> the ERP and the MES never look into each other's database, they send messages. The ERP sends a <i>production order</i>; the MES answers <i>order received</i> with its work order, sends <i>confirmations</i> of good and scrap every hour (each books a goods receipt into the stock), a <i>DESADV</i> (the delivery note of a truck: the goods issue) and every morning at " ~ rules.stock_count_at ~ " a <i>stock count</i>, which corrects the books to what is really there. <b>The table of the demand</b>: one cell = one day, green when shipped, red when late; <i>ERP stock</i> is the books, <i>MES counts</i> what the MES sees now (good units after final assembly that have not left).",
+          "<b>Rozhranie:</b> ERP a MES si nikdy nečítajú databázu, posielajú si správy. ERP pošle <i>výrobnú zákazku</i>; MES odpovie <i>prijatím zákazky</i> so svojou výrobnou zákazkou, každú hodinu pošle <i>hlásenia</i> dobrých a zlých kusov (každé zaúčtuje príjem na sklad), <i>DESADV</i> (dodací list kamióna: výdaj zo skladu) a každé ráno o " ~ rules.stock_count_at ~ " <i>inventúru</i>, ktorá opraví účtovníctvo podľa toho, čo naozaj je. <b>Tabuľka dopytu</b>: jedna bunka = jeden deň, zelená, keď odišlo, červená, keď mešká; <i>sklad ERP</i> je účtovníctvo, <i>MES ráta</i> to, čo MES vidí teraz (dobré kusy po finálnej montáži, ktoré ešte neodišli).") }}
+    {{ bi("<b>What goes wrong, as on a real interface:</b> every night " ~ (rules.interface.maintenance|join('–') or 'never') ~ " the ERP is down for maintenance: messages to it wait and are tried again later, in their order. Sometimes the answer of a delivery gets lost: the sender sends the message again, the receiver knows its ID (<i>idempotency</i>) and does not book it twice (<i>duplicates caught</i>). A product the ERP locked for a stock count refuses goods movements: the message goes to the <b>error queue</b>, where it waits for the key user (" ~ (rules.interface.key_user_at|join(', ')) ~ ") or for you: <i>Process again</i> or <i>Discard</i>.",
+          "<b>Čo sa pokazí, ako na skutočnom rozhraní:</b> každú noc " ~ (rules.interface.maintenance|join('–') or 'nikdy') ~ " má ERP údržbu: správy preň čakajú a skúšajú sa neskôr, v poradí, ako vznikli. Niekedy sa stratí odpoveď na doručenie: odosielateľ pošle správu znova, príjemca pozná jej ID (<i>idempotencia</i>) a nezaúčtuje ju dvakrát (<i>zachytené duplikáty</i>). Výrobok, ktorý ERP zamklo na inventúru, odmieta pohyby tovaru: správa ide do <b>chybovej fronty</b>, kde čaká na kľúčového používateľa (" ~ (rules.interface.key_user_at|join(', ')) ~ ") alebo na teba: <i>Spracovať znova</i> alebo <i>Zahodiť</i>.") }}
+  </div>
+{% endcall %}
+
+<div class="kpis" id="erp-kpis"></div>
+<div class="panel">
+  <h3>{{ bi_inline("Demand of the customers and how it is covered", "Dopyt zákazníkov a ako je pokrytý") }}</h3>
+  <div class="table-wrap" id="erp-demand"><p class="empty">Waiting for data…</p></div>
+</div>
+<div class="grid-2">
+  <div class="stack">
+    <div class="panel">
+      <h3>{{ bi_inline("Messages", "Správy") }}</h3>
+      <div class="tabs" id="erp-tabs" style="margin-bottom:8px">
+        <a href="#" data-status="" class="active">{{ bi_inline("All", "Všetky") }}</a>
+        <a href="#" data-status="ERROR">{{ bi_inline("Error queue", "Chybová fronta") }}</a>
+        <a href="#" data-status="PENDING">{{ bi_inline("Waiting", "Čakajú") }}</a>
+      </div>
+      <div class="table-wrap" id="erp-messages"></div>
+    </div>
+  </div>
+  <div class="stack">
+    <div class="panel"><h3>{{ bi_inline("Production orders of the ERP", "Výrobné zákazky ERP") }}</h3><div class="table-wrap" id="erp-orders"></div></div>
+    <div class="panel"><h3>{{ bi_inline("Last call-offs", "Posledné odvolávky") }}</h3><div class="table-wrap" id="erp-calloffs"></div></div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}<script src="/static/erp.js?v={{ version }}"></script>{% endblock %}

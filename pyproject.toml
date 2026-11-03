@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mes-lab"
-version = "0.8.0"
+version = "0.21.1"
 description = "Virtual automotive electronics plant (discrete-event simulation) with its own MES"
 requires-python = ">=3.12"
 dependencies = [
@@ -20,10 +20,13 @@ dependencies = [
     "alembic>=1.13",
     "itsdangerous>=2.1",
     "tzdata",
+    "asyncua>=1.1",          # OPC UA: the server of the machines, the MES's browser
+    "paho-mqtt>=2.1",        # MQTT: the Unified Namespace
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pgserver>=0.1.4"]
+# zxing: the label tests read the bar codes back; amqtt: an MQTT broker for local development and the tests
+dev = ["pytest>=8", "pgserver>=0.1.4", "zxing-cpp>=2.2", "numpy", "amqtt>=0.11"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

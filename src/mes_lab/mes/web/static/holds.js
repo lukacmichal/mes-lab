@@ -3,7 +3,8 @@
   const form = document.getElementById("hold-form") || document.createElement("form");
   const kind = document.getElementById("kind") || { value: "" , addEventListener() {} };
   const msg = document.getElementById("form-msg");
-  const LABELS = { SERIAL: "Serial number", WORK_ORDER: "Work order number", STATION_WINDOW: "Station code (e.g. SMT-02-OVN)" };
+  const LABELS = { SERIAL: "Serial number", WORK_ORDER: "Work order number", STATION_WINDOW: "Station code (e.g. SMT-02-OVN)",
+    MATERIAL_LOT: "Supplier lot of a component or solder paste (e.g. L03-0002)" };
 
   function syncKind() {
     if (!document.getElementById("target-label")) return;
@@ -22,6 +23,10 @@
   if (params.get("serial") && document.getElementById("target")) {
     kind.value = "SERIAL";
     document.getElementById("target").value = params.get("serial");
+  }
+  if (params.get("lot") && document.getElementById("target")) {        // from the Material page
+    kind.value = "MATERIAL_LOT";
+    document.getElementById("target").value = params.get("lot");
   }
   syncKind();
 
@@ -66,7 +71,7 @@
           ${h.window_from ? `<div class="faint mono">${esc(dt(h.window_from))} – ${esc(dt(h.window_to))}</div>` : ""}</td>
         <td>${esc(h.reason)}</td><td class="num">${n(h.affected)}</td><td class="num">${n(h.in_quarantine)}</td>
         <td>${upill(h.status === "ACTIVE" ? "HOLD" : "RELEASED", h.status)}${h.disposition ? `<div class="faint">${esc(h.disposition.toLowerCase())}, ${esc(dt(h.released_at))}</div>` : ""}</td>
-        <td style="white-space:nowrap">${h.status === "ACTIVE" && window.MES_CAN_ACT ? `<button class="btn small" data-id="${h.id}" data-d="RETURN">Release</button>
+        <td style="white-space:nowrap">${h.status === "ACTIVE" && MES.can("quality") ? `<button class="btn small" data-id="${h.id}" data-d="RETURN">Release</button>
           <button class="btn small danger" data-id="${h.id}" data-d="SCRAP">Release + scrap</button>` : ""}</td>
       </tr>`).join("")}</table>` : `<p class="empty">No holds yet.</p>`;
   }

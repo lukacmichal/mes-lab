@@ -9,3 +9,4 @@ NAVRH.md
 *.log
 .vscode/
 build/
+nas-credentials.local

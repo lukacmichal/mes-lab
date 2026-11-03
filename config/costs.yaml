@@ -10,7 +10,8 @@
 # hold_per_h   - a unit in stock or in work ties up money and space (per unit and hour)
 costs:
   currency: EUR
-  labor_per_h: {OPERATOR: 21.0, MAINTENANCE: 29.0, IT: 31.0, FOREMAN: 34.0, LOGISTICS: 21.0, MANAGER: 52.0}
+  labor_per_h: {OPERATOR: 21.0, MAINTENANCE: 29.0, IT: 31.0, FOREMAN: 34.0, LOGISTICS: 21.0, MANAGER: 52.0,
+                MATERIAL: 22.0}
   robot_per_h: 2.4
   line_per_h: {SMT: 92.0, FA: 36.0, PACK: 9.0, REPAIR: 4.0}
   energy_per_h: {SMT: 21.0, FA: 7.0, PACK: 1.0, REPAIR: 0.5}

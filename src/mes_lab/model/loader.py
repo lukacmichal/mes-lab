@@ -8,6 +8,8 @@ from typing import Any
 
 import yaml
 
+from mes_lab.labels import unknown as label_unknown
+
 from .schema import (
     JOB_AREAS,
     AmrConfig,
@@ -16,6 +18,8 @@ from .schema import (
     Cell,
     CodeEntry,
     CostConfig,
+    ErpConfig,
+    LabelConfig,
     CrewConfig,
     Customer,
     Line,
@@ -23,13 +27,17 @@ from .schema import (
     PlantInfo,
     PlantModel,
     Shift,
+    SmtMaterialConfig,
+    SmtPart,
+    Supplier,
     ShippingConfig,
     Station,
     StationKind,
     StationType,
 )
 
-CONFIG_FILES = ("plant.yaml", "station_types.yaml", "products.yaml", "codes.yaml", "crew.yaml", "costs.yaml")
+CONFIG_FILES = ("plant.yaml", "station_types.yaml", "products.yaml", "codes.yaml", "crew.yaml", "costs.yaml",
+                "smt_material.yaml", "erp.yaml", "labels.yaml")
 
 
 class ModelError(ValueError):
@@ -56,6 +64,7 @@ def _read(config_dir: Path) -> dict[str, Any]:
 def _expand_template(line_cfg: dict, template: dict, area: Area,
                      types: dict[str, StationType]) -> Line:
     code = line_cfg["code"]
+    names = line_cfg.get("station_names") or {}       # a station named otherwise than its type (settings)
     cells: list[Cell] = []
     for index, entry in enumerate(template["stations"]):
         if isinstance(entry, str):
@@ -68,9 +77,10 @@ def _expand_template(line_cfg: dict, template: dict, area: Area,
         stations = []
         for slot in range(1, count + 1):
             suffix = f"{tag}{slot}" if count > 1 else tag
+            st_code = f"{code}-{suffix}"
             stations.append(Station(
-                code=f"{code}-{suffix}",
-                name=f"{name} #{slot}" if count > 1 else name,
+                code=st_code,
+                name=names.get(st_code) or (f"{name} #{slot}" if count > 1 else name),
                 type=type_code, line=code, cell=index, slot=slot,
             ))
         cells.append(Cell(index=index, type=type_code, stations=stations))
@@ -125,11 +135,20 @@ def build_model(data: dict[str, Any]) -> PlantModel:
         shipping=ShippingConfig(**data["shipping"]),
         amr=AmrConfig(**(data.get("amr") or {})),
         costs=CostConfig(**data["costs"]) if data.get("costs") else None,
+        smt_material=_smt_material(data.get("smt_material") or {}),
+        erp=ErpConfig(**(data.get("erp") or {})),
+        labels=LabelConfig(**(data.get("labels") or {})),
     )
     problems += _validate(model)
     if problems:
         raise ModelError(problems)
     return model
+
+
+def _smt_material(cfg: dict) -> SmtMaterialConfig:
+    parts = {code: SmtPart(code=code, **v) for code, v in (cfg.get("parts") or {}).items()}
+    suppliers = {code: Supplier(code=code, **v) for code, v in (cfg.get("suppliers") or {}).items()}
+    return SmtMaterialConfig(**{**cfg, "parts": parts, "suppliers": suppliers})
 
 
 def _validate(m: PlantModel) -> list[str]:
@@ -178,6 +197,18 @@ def _validate(m: PlantModel) -> list[str]:
             elif m.materials[mat].kind != "FG":
                 p.append(f"line {line.code}: {mat} is not a finished good")
 
+    # SMT material -------------------------------------------------------------------
+    for part in m.smt_material.parts.values():
+        if part.machine not in m.station_types:
+            p.append(f"part {part.code}: unknown placer type {part.machine}")
+        if part.msl is not None and part.msl not in m.smt_material.msl.floor_h:
+            p.append(f"part {part.code}: no floor life for MSL {part.msl}")
+        if m.smt_material.suppliers and part.supplier not in m.smt_material.suppliers:
+            p.append(f"part {part.code}: unknown supplier {part.supplier}")
+    for sup in m.smt_material.suppliers.values():
+        if not sup.trucks:
+            p.append(f"supplier {sup.code}: no trucks")
+
     # materials -------------------------------------------------------------------
     smt_lines = m.lines_of_kind(AreaKind.SMT)
     for mat in m.materials.values():
@@ -190,6 +221,15 @@ def _validate(m: PlantModel) -> list[str]:
             if not any(m.station_types.get(t) and m.station_types[t].kind == StationKind.LOADER
                        for t in op.steps):
                 p.append(f"{mat.code}/{op.op}: the first step must be a loader")
+        for op in mat.routing:
+            for part, qty in op.components.items():
+                spec = m.smt_material.parts.get(part)
+                if spec is None:
+                    p.append(f"{mat.code}/{op.op}: unknown component {part}")
+                elif spec.machine not in op.steps:
+                    p.append(f"{mat.code}/{op.op}: {part} needs {spec.machine}, which the pass does not use")
+                if qty <= 0:
+                    p.append(f"{mat.code}/{op.op}: {part} needs a quantity > 0")
         if mat.kind == "PCBA":
             ops = [o.op for o in mat.routing]
             if not ops or not all(o.startswith("SMT_") for o in ops):
@@ -261,6 +301,34 @@ def _validate(m: PlantModel) -> list[str]:
                 assert 0 <= int(hh) < 24 and 0 <= int(mm) < 60
             except (ValueError, AssertionError):
                 p.append(f"shipping: {truck.customer}: bad time {at!r}")
+    for code, t in m.labels.templates.items():
+        tw, th = t.size_mm
+        for name, f in t.fields.items():
+            where = f"labels.templates.{code}.fields.{name}"
+            if f.x + f.w > tw + 0.01 or f.y + f.h > th + 0.01:
+                p.append(f"{where}: does not fit on the label ({tw} x {th} mm)")
+            bad = label_unknown(f.value) + label_unknown(f.title)
+            if bad:
+                p.append(f"{where}: unknown placeholder(s) {', '.join(bad)}")
+            if f.barcode == "code128" and f.di == "(00)" and f.value.strip() != "{sscc}":
+                p.append(f"{where}: the GS1-128 SSCC bar code must print {{sscc}}")
+    erp = m.erp
+    for name, at in ([("call_offs.at", erp.call_offs.at), ("stock_count_at", erp.stock_count_at)]
+                     + [("interface.maintenance", t) for t in erp.interface.maintenance]
+                     + [("interface.key_user_at", t) for t in erp.interface.key_user_at]):
+        try:
+            hh, mm = at.split(":")
+            assert 0 <= int(hh) < 24 and 0 <= int(mm) < 60
+        except (ValueError, AssertionError):
+            p.append(f"erp.{name}: bad time {at!r}")
+    if len(erp.interface.maintenance) not in (0, 2):
+        p.append("erp.interface.maintenance: [from, to] or []")
+    if len(erp.interface.lock_min) != 2 or not 0 < erp.interface.lock_min[0] <= erp.interface.lock_min[1]:
+        p.append("erp.interface.lock_min: [shortest, longest] minutes")
+    if not erp.interface.retry_min:
+        p.append("erp.interface.retry_min: at least one wait")
+    if erp.call_offs.firm_days > erp.call_offs.days:
+        p.append("erp.call_offs: firm_days > days")
     served = {t.customer for t in m.shipping.trucks}
     for mat in m.finished_goods():
         if mat.customer not in served:
@@ -280,7 +348,7 @@ def _validate(m: PlantModel) -> list[str]:
             for kind in table:
                 if kind not in kinds:
                     p.append(f"costs.{name}: unknown area kind {kind}")
-        roles = {"OPERATOR", "MAINTENANCE", "IT", "FOREMAN", "LOGISTICS", "MANAGER"}
+        roles = {"OPERATOR", "MAINTENANCE", "IT", "FOREMAN", "LOGISTICS", "MANAGER", "MATERIAL"}
         for role in m.costs.labor_per_h:
             if role not in roles:
                 p.append(f"costs.labor_per_h: unknown role {role}")

@@ -1,0 +1,19 @@
+[Unit]
+Description=MES lab - keep the VM above the idle line of Oracle Always Free (spare CPU only)
+
+[Service]
+User=mes
+Group=mes
+Environment=KEEPALIVE_TARGET=25
+ExecStart=/usr/bin/python3 /opt/mes-lab/keepalive.py
+Nice=19
+CPUSchedulingPolicy=idle
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

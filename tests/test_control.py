@@ -89,6 +89,48 @@ def test_the_live_loop_pauses_and_jumps(model, monkeypatch):
     assert plant.paused and live_step(plant) == "paused"             # ... and paused, as asked
 
 
+def test_at_midnight_the_plant_goes_on_with_the_real_day():
+    """The plant's calendar follows the real one: past its midnight, a plant off the real time (ahead after a
+    jump or a faster speed, behind after a stop) starts the real day at 00:00; close to it, it keeps its day;
+    while it runs ahead to a time it gets there first."""
+    from zoneinfo import ZoneInfo
+
+    from mes_lab.sim.runner import new_day
+
+    tz = ZoneInfo("Europe/Bratislava")
+
+    class Plant:
+        def __init__(self, start):
+            self.clock = PlantClock(start)
+            self.env = type("Env", (), {"now": 0.0})()
+            self.goto_s = None
+
+    real = datetime(2026, 10, 19, 21, 30, tzinfo=tz)                 # the real clock: 19 Oct, 21:30
+    ahead = Plant(datetime(2027, 3, 30, 23, 50, tzinfo=tz))           # months ahead
+    assert new_day(ahead, tz, real) is None                           # the first look only notes the day
+    ahead.env.now = 5 * 60
+    assert new_day(ahead, tz, real) is None                           # 23:55: still the same day
+    ahead.env.now = 15 * 60
+    assert new_day(ahead, tz, real) == datetime(2026, 10, 19, 0, 0, tzinfo=tz)    # past midnight: the real day
+    behind = Plant(datetime(2026, 10, 17, 23, 59, tzinfo=tz))
+    new_day(behind, tz, real)
+    behind.env.now = 120
+    assert new_day(behind, tz, real) == datetime(2026, 10, 19, 0, 0, tzinfo=tz)
+    in_step = Plant(datetime(2026, 10, 19, 23, 58, tzinfo=tz))        # a few minutes off the real midnight
+    new_day(in_step, tz, real.replace(hour=23, minute=55))
+    in_step.env.now = 180
+    assert new_day(in_step, tz, real.replace(hour=23, minute=58)) is None
+    late = Plant(datetime(2026, 10, 19, 23, 59, tzinfo=tz))           # hours behind, but the day is right
+    new_day(late, tz, datetime(2026, 10, 20, 10, 0, tzinfo=tz))
+    late.env.now = 120
+    assert new_day(late, tz, datetime(2026, 10, 20, 10, 2, tzinfo=tz)) is None
+    jumping = Plant(datetime(2026, 10, 19, 23, 50, tzinfo=tz))
+    jumping.goto_s = 10 * 3600.0
+    new_day(jumping, tz, real)
+    jumping.env.now = 20 * 60
+    assert new_day(jumping, tz, real) is None                         # on the way to its time: not now
+
+
 def test_pause_and_jump_need_a_signed_in_user(pg_url):
     from fastapi.testclient import TestClient
     from sqlalchemy import create_engine, text

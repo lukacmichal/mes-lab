@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from mes_lab.model.schema import PlantModel
 
 from . import models as db
+from .labels import Labels
 from .trace import Trace
 from .views import Clock
 
@@ -125,6 +126,10 @@ class TraceViews:
                 "serial": serials.get(d.unit_id), "code": d.code, "name": name, "station": code,
                 "found_at": clock.iso(d.found_at), "status": d.status, "closed_at": clock.iso(d.closed_at),
             } for d, name, code in defects],
+            "components": [{**c, "serial": serials.get(c.pop("unit_id"))}
+                           for c in (self.trace.material.components(session, ancestry) if self.trace.material else [])],
+            "label": (lambda lb: Labels.out(lb) if lb is not None else None)(
+                session.scalar(select(db.Label).where(db.Label.unit_id == unit.id))),
         }
 
     # ------------------------------------------------------------------ shipping

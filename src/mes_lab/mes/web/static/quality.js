@@ -18,7 +18,7 @@
       ${d.quarantine.map((q) => `<tr><td>${link(q.serial)}<div class="faint">${esc(q.kind)}</div></td>
         <td>${esc(q.material)}</td><td>${esc(q.reason || "")}<div class="faint">${esc(q.location || "")}</div></td>
         <td class="mono">${esc(dt(q.since))}</td>
-        <td style="white-space:nowrap">${window.MES_CAN_ACT ? `<button class="btn small" data-serial="${esc(q.serial)}" data-act="RETURN">Release</button>
+        <td style="white-space:nowrap">${MES.can("quality") ? `<button class="btn small" data-serial="${esc(q.serial)}" data-act="RETURN">Release</button>
           <button class="btn small danger" data-serial="${esc(q.serial)}" data-act="SCRAP">Scrap</button>` : ""}</td></tr>`).join("")}
       </table>` : `<p class="empty">Nothing in quarantine.</p>`;
 
@@ -56,4 +56,18 @@
   });
 
   MES.poll("/api/v1/quality", render, 4000);
+
+  // the master sample checks of the testers
+  const T = (en, sk) => (MES.lang() === "sk" ? sk : en);
+  let checks = null;
+  function renderChecks() {
+    if (!checks) return;
+    const rows = checks.testers.map((v) => `<tr><td><b>${MES.esc(v.station)}</b><div class="faint">${MES.esc(v.name)}</div></td>
+      <td>${v.valid ? `<span class="pill st-RUNNING">${T("valid this shift", "platné v tejto zmene")}</span>` : `<span class="pill st-MAINTENANCE">${T("check due", "čaká na overenie")}</span>`}</td>
+      <td>${v.last ? `${MES.esc(v.last.at.slice(11, 16))} · ${v.last.result === "PASS" ? "PASS" : `<b style="color:var(--s-down)">FAIL</b>`}${v.last.person ? ` · ${MES.esc(v.last.person)}` : ""}` : "–"}</td>
+      <td class="num">${v.fails_24h ? `<b style="color:var(--s-down)">${v.fails_24h}</b>` : "0"}</td></tr>`).join("");
+    document.getElementById("verifications").innerHTML = `<table><tr><th>${T("Tester", "Tester")}</th><th></th><th>${T("Last check", "Posledné overenie")}</th><th class="num">${T("failed 24 h", "zlyhalo 24 h")}</th></tr>${rows}</table>`;
+  }
+  document.addEventListener("mes-lang", renderChecks);
+  MES.poll("/api/v1/verifications", (d) => { checks = d; renderChecks(); }, 10000);
 })();

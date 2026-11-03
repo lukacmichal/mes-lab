@@ -30,7 +30,9 @@ signed-in user.
  |  /api/v1/edge/ingest         upserts into PostgreSQL                   |
  |  /api/v1/dispatch/next-job   lines ask for work -> demo planner        |
  |  /api/v1/sim/runs            a new run = empty shop floor              |
- |  web: plant floor (live, from above), overview, line view, work orders |
+ |  web: plant floor (live, from above), overview, lines, andon, people,  |
+ |  material, KPI, orders, ERP, trace, quality, SPC, holds, training,     |
+ |  settings, guide (EN/SK)                                               |
  +------------------------------------------------------------------------+
 ```
 
@@ -49,9 +51,21 @@ signed-in user.
   fixed random seed.
 * **MES** (`src/mes_lab/mes`): master data synced from the YAML, work orders and
   jobs (one job = one routing operation on one line), dispatching, the condensed
-  production history, and the web pages. Until the fake ERP exists, a demo planner
-  creates final assembly orders and keeps the SMT supermarket above its safety
-  stock (`src/mes_lab/planning.py`).
+  production history, and the web pages. The final assembly orders come from the
+  fake ERP (below); the MES keeps the SMT supermarket above its safety stock itself
+  (`src/mes_lab/planning.py`).
+* **Connectivity** (`src/mes_lab/connect`): the simulated machines are an OPC UA server (asyncua; ACME >
+  Plant1 > area > line > station, typed variables with units), and the edge gateway publishes every change
+  into a Unified Namespace in MQTT (`acme/plant1/<area>/<line>/<station>/state|piece|counts|cycle|values/...`,
+  retained, with a last will). The MES adds the queue of every line and mirrors the tree; its Connectivity
+  page shows the UNS and browses the OPC UA server live. Mosquitto on the server, amqtt locally.
+* **Fake ERP** (`src/mes_lab/erp`, `config/erp.yaml`): customer call-offs (VDA 4905 /
+  DELFOR, firm days and a forecast), hourly MRP into production orders, and the books
+  (confirmations with goods receipts, goods issues, stock counts). It never reads the
+  MES's tables: the two exchange messages (production order, order received,
+  confirmation, DESADV, stock count) with at-least-once delivery, retries through the
+  ERP's nightly maintenance, lost answers caught by idempotency, and an error queue for
+  refused messages (`/erp`).
 * **Traceability** (`src/mes_lab/mes/trace.py`): interlocked stations check every
   piece in before working on it. The MES refuses scrapped pieces, pieces on hold,
   pieces with open defects and pieces that skipped a routing step, and it issues
@@ -62,6 +76,42 @@ signed-in user.
   found its defect; holds (serial, work order, or station + time window, plus
   everything made from it) stop pieces at their next check-in and park them in
   quarantine until they are released or scrapped.
+* **SMT material** (`config/smt_material.yaml`, `sim/material.py`, `sim/receiving.py`, `mes/material.py`,
+  `/material`): every placement machine has a feeder for each part of its job. Before a reel runs out, the
+  operator brings the next one from the rack at the line, scans it and splices it; the MES refuses a wrong
+  part, a part that is not in the program and a moisture-sensitive reel past its floor life (MSL; such
+  reels are baked). Solder paste has a thaw time and an open time. Reels come by truck from three fictional
+  suppliers, are scanned in at goods-in against the delivery note, stored first in, first out and brought
+  to the lines by a material handler (kanban cards, a round every half hour). The MES knows which reel was
+  on which feeder while a board was placed, so a supplier lot leads to its boards, and a hold on the lot
+  takes its reels off the machines and out of the racks and the store.
+* **Hour by hour and andon** (`mes/hourly.py`, `/andon`): the MES plans every hour of a line from its work
+  orders (ideal cycle of the bottleneck x 0.85) and a board above the line shows the plan against what was
+  made. A breakdown calls the foreman after 15 minutes and the production manager after an hour, and ten
+  minutes into each shift the foreman and the technicians meet for five minutes at the andon board.
+* **SPC and master samples** (`mes/spc.py`, `/spc`): process values drift slowly in the simulation (screw
+  torque, press force, coating weight, paste volume, oven temperature). The MES charts hourly subgroups of
+  five against control limits and checks run rules; an alarm sends a technician to adjust the machine, and
+  a point beyond the limits (or a value out of tolerance) puts what the station made since the last good
+  subgroup on hold. In-circuit and end-of-line testers check their master sample at the start of every
+  shift; until that check has passed, the MES refuses production units at the tester.
+* **People: qualifications and absences** (`/people`, `mes/qualifications.py`): a qualification matrix per
+  shift (SMT, final assembly, inspection, packing, repair; the inspection and repair certificates expire),
+  sickness and holidays covered by relief people at the start of the shift, and a check-in refuses an
+  operator without a valid qualification. A signed-in user grants, renews or takes away a qualification
+  with a reason. Taking one away counts from the next shift, the MES stays the master of these decisions,
+  and an operator who lost the qualification of their own seat goes to retraining.
+* **Labels** (`config/labels.yaml`, `src/mes_lab/labels`): the KLT box label after VDA 4902 (Code 39 with
+  data identifiers) and the pallet label with the SSCC as GS1-128. A template is a set of fields in
+  millimetres; a label is printed when a full box or a closed pallet passes the printer, stored with its
+  values, shown in Trace and printed again from there with a reason. Templates are changed in Settings;
+  the tests read the barcodes back with a barcode reader library.
+* **Training scenarios** (`/training`, `src/mes_lab/training.py`, `mes/training.py`): exercises in the live
+  plant: a bad supplier lot on the feeders, a storm of false calls at an AOI, a reflow oven failure and a
+  customer complaint about one shipped unit. The trainee looks for the pieces at risk and puts holds; at
+  the end the MES compares the holds with what really happened (the genealogy of the lot, what the AOI let
+  through, what was in the oven, what the screwdriver did in the suspect window) and grades every piece:
+  contained, caught by a tester, escaped or still open.
 * **Plant floor** (`/`, `src/mes_lab/layout.py`, `sim/floor.py`, `web/static/floor-*.js`):
   the plant seen from above, live. The floor plan is computed from the plant model
   and serves two readers: the page draws machines, belts and warehouses from it, and
@@ -123,6 +173,17 @@ signed-in user.
   (`mes/scenario.py`, `POST /api/v1/plant/scenario`): the plant learns it with the answer to its next
   report, starts a new run built with those knobs and tells the MES which lines it has; the work of the
   missing lines moves to the others, the planner and the pages follow, and every page says so.
+* **Settings and the change log** (`/settings`, `src/mes_lab/settings.py`, `mes/settings_store.py`,
+  `mes/settings_views.py`): the master data on the web: products and customers, the bill of materials
+  of every board, routings with their ideal cycles, line and station names, planned maintenance and spec
+  limits, defect and downtime codes, shifts and breaks, users and roles (administrator, process engineer,
+  quality, shift supervisor). The YAML stays the plant as built; a change is an override (a path by codes,
+  `materials/PCBA-BCM-200/routing/SMT_BOT/steps/PNP_CHIP`) that goes into a draft, is checked against the
+  whole plant at once and is released with a reason as a numbered revision after a trial hour of the
+  plant offline, in force now or from the next shift start (plant time). The MES rebuilds its own plant
+  model and the master data tables; changes the machines need make the plant start a new run built with
+  the same overrides (`GET /api/v1/sim/scenario`). Released revisions never change; the log shows every
+  change with the value before and after, who, when and why.
 * **Live view at any speed** (`web/static/floor-core.js`): the picture runs a second behind the plant on
   purpose, so every walk, drive and ride (`trh`, `at` in the snapshot) is known in full before it is
   drawn: at 60x people still go along the walkways, not straight through the walls.
@@ -153,9 +214,12 @@ Other entry points:
 | `python -m pytest` | tests (model, floor plan, simulation, live snapshot, MES API, simulation driving the MES; the browser code runs in Node when it is installed) |
 
 Environment: `MES_DATABASE_URL` (postgresql+psycopg://...), `MES_EDGE_TOKEN`
-(required bearer token on the shop-floor API when set), `MES_REQUIRE_LOGIN=1`,
+(required bearer token on the shop-floor API when set), `MES_LOGIN` (`actions`: anybody
+may look, changes need a signed-in user; `all`: everything needs one; `off`: development),
 `MES_SECRET_KEY`, `MES_COOKIE_SECURE=1`, `MES_RETENTION_DAYS` (unit-level history
-kept for that many plant days), `MES_URL` for the plant.
+kept for that many plant days), `MES_URL` for the plant, `MES_MQTT_URL`,
+`MES_OPCUA_ENDPOINT` (the plant's OPC UA server) and `MES_OPCUA_URL` (where the MES
+reads it); without the last three, MQTT and OPC UA stay off.
 
 The schema is managed with Alembic; the MES migrates on start. After changing
 `models.py` run `python scripts/new_migration.py "what changed"` and review the file.
@@ -170,12 +234,16 @@ firewall opening 80/443 (`deploy/`). Secrets are generated on the server in
 ## Layout
 
 ```
-config/            plant model (YAML)
-src/mes_lab/model  loading and validating the plant model
+config/                   plant model (YAML)
+src/mes_lab/model         loading and validating the plant model
 src/mes_lab/layout.py     floor plan: machine and belt coordinates, shared by page and simulation
-src/mes_lab/sim    simulation: stations, lines, plant, edge gateway, dispatchers
-src/mes_lab/mes    MES: schema, ingest, dispatching, read models, web
+src/mes_lab/sim           simulation: stations, lines, people, robots, material, edge gateway
+src/mes_lab/mes           MES: schema, ingest, dispatching, traceability, read models, web
+src/mes_lab/erp           the fake ERP and the messages between it and the MES
+src/mes_lab/connect       OPC UA server of the machines, MQTT unified namespace
+src/mes_lab/labels        label templates and barcodes
 src/mes_lab/planning.py   planning rules shared by the MES and offline runs
+src/mes_lab/kpi.py        KPIs, shared by the MES and offline runs
 tests/
 ```
 
@@ -189,7 +257,9 @@ The plant, its products and its customers are fictional.
 1. Plant model, simulation core, database schema, minimal web - **done**
 2. Check-in/check-out at stations, route enforcement, serial numbers and
    genealogy, search, quality and repair, holds; first deployment - **done**
-3. Settings web (products, BOMs, routings, stations, reasons, shifts, users) with change log
-4. Material (reels, MSL, feeder setup, solder paste), packing labels, shipping (ASN), fake ERP
-5. OPC UA, MQTT / unified namespace, KPIs (OEE, FPY, MTBF/MTTR) - KPIs **done** (0.6.0)
-6. Training scenarios and a read-only AI assistant
+3. Settings web (products, BOMs, routings, stations, reasons, shifts, users) with change log - **done** (0.15.0)
+4. Material (reels, MSL, feeder setup, solder paste), shipping (ASN), fake ERP, label templates
+   (VDA 4902 box label, GS1-128 pallet label) - **done** (0.18.0)
+5. OPC UA, MQTT / unified namespace, KPIs (OEE, FPY, MTBF/MTTR) - **done** (KPIs 0.6.0, OPC UA and UNS 0.19.0)
+6. Training scenarios (bad supplier lot, AOI false call storm, reflow oven failure, customer complaint;
+   graded containment) - **done** (0.21.0); a read-only AI assistant still open

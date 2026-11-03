@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% from "_help.html" import bi, bi_inline, help %}
+{% block title %}Material{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>{{ bi_inline("SMT material", "Materiál SMT") }}</h1>
+  <span class="sub">{{ bi_inline("Reels on the feeders, solder paste on the printers, the scans and the floor life", "Cievky na podávačoch, spájkovacia pasta na tlačiarňach, skeny a životnosť") }}</span>
+</div>
+
+{% call help("material") %}
+  <div class="cols">
+    {{ bi("<b>Reels and feeders:</b> the components come on reels (thousands of resistors on a tape, a few hundred chips). Every placer has a feeder for each part of the job. When a reel has about " ~ (rules.reels.splice_warn_min|round|int) ~ " minutes of placing left, the operator brings the next reel from the rack at the line, <b>scans the feeder and the reel</b> and joins the new tape to the running one (a <i>splice</i>): the machine never stops. The MES checks every scan: the wrong part, a part the program of the job does not use, or a moisture-sensitive part whose floor life ran out is refused before it goes on. A reel that runs out before the splice stops the machine.",
+          "<b>Cievky a podávače:</b> súčiastky prichádzajú na cievkach (tisíce rezistorov na páske, pár stoviek čipov). Každý osadzovací automat má podávač pre každú súčiastku zákazky. Keď cievke ostáva asi " ~ (rules.reels.splice_warn_min|round|int) ~ " minút osadzovania, operátor prinesie ďalšiu cievku z regálu pri linke, <b>naskenuje podávač a cievku</b> a novú pásku pripojí k bežiacej (<i>splice</i>, spojenie): stroj vôbec nezastane. MES kontroluje každý sken: nesprávnu súčiastku, súčiastku, ktorú program zákazky nepoužíva, alebo citlivú súčiastku, ktorej vypršala životnosť, odmietne skôr, než ide do stroja. Cievka, ktorá dôjde pred spojením, stroj zastaví.") }}
+    {{ bi("<b>Solder paste:</b> " ~ rules.paste.name ~ " is kept in a fridge. A jar must thaw at least " ~ (rules.paste.thaw_h|round|int) ~ " hours in the thaw cabinet before it is opened (cold paste draws water: solder balls), and it may stay open on the stencil at most " ~ (rules.paste.open_h|round|int) ~ " hours. The MES checks the jar when it is scanned at the printer and at every print: an open jar too old blocks the printer until a new one is on.",
+          "<b>Spájkovacia pasta:</b> " ~ rules.paste.name ~ " sa skladuje v chladničke. Dóza sa musí v rozmrazovacej skrini ohrievať aspoň " ~ (rules.paste.thaw_h|round|int) ~ " hodiny, kým sa otvorí (studená pasta naťahuje vodu: guľôčky spájky), a otvorená na šablóne smie byť najviac " ~ (rules.paste.open_h|round|int) ~ " hodín. MES kontroluje dózu pri skene na tlačiarni aj pri každej tlači: priveľmi stará otvorená dóza tlačiareň zablokuje, kým nie je nasadená nová.") }}
+    {{ bi("<b>Goods-in and the supply of the lines:</b> the suppliers bring the reels by truck to the bay south of the goods-in warehouse. The material handler scans every reel against the delivery note (a part that was not ordered and a lot on hold are refused), labels it and puts it into the reel store. The rack at every SMT line keeps a spare reel of each part its job uses: taking it orders the next one (kanban), a new job orders what is missing. The handler picks the reels in the store, the oldest first (FIFO: the MES refuses a newer one), and brings them round the lines every half hour, at once when a line waits.",
+          "<b>Príjem a zásobovanie liniek:</b> dodávatelia vozia cievky kamiónom k rampe južne od skladu materiálu. Zásobovač naskenuje každú cievku podľa dodacieho listu (neobjednanú súčiastku a šaržu na blokácii MES odmietne), označí ju štítkom a uloží do skladu cievok. Regál pri každej linke SMT drží náhradnú cievku každej súčiastky svojej zákazky: keď sa vezme, objedná sa ďalšia (kanban), nová zákazka objedná, čo chýba. Zásobovač cievky vychystá v sklade, najstaršie prvé (FIFO: novšiu MES odmietne), a vozí ich po linkách každú polhodinu, hneď, keď linka čaká.") }}
+    {{ bi("<b>MSL and genealogy:</b> chips in plastic packages absorb moisture; out of their dry bag they may lie open only for their floor life (MSL 3: a week, MSL 5a: a day), otherwise they crack in the reflow oven. The MES counts it for every reel and has a reel taken off when it runs out; such a reel is baked " ~ (rules.msl.bake_h|round|int) ~ " h. Because the MES knows which reel fed which placer when, every board knows its reels and supplier lots (on the Trace page), and a bad lot from a supplier can be put on hold with everything made with it.",
+          "<b>MSL a genealógia:</b> čipy v plastových puzdrách naťahujú vlhkosť; mimo suchého vrecka smú ležať otvorené len počas svojej životnosti (MSL 3: týždeň, MSL 5a: deň), inak v pretavovacej peci prasknú. MES ju počíta každej cievke a cievku, ktorej vyprší, dá zo stroja zložiť; taká cievka sa " ~ (rules.msl.bake_h|round|int) ~ " h vypeká. Keďže MES vie, ktorá cievka kedy podávala do ktorého automatu, každá doska pozná svoje cievky a šarže dodávateľa (na stránke Trace) a zlú šaržu dodávateľa možno zablokovať so všetkým, čo sa z nej vyrobilo.") }}
+  </div>
+{% endcall %}
+
+<div class="kpis" id="mat-kpis"></div>
+<div class="grid-2">
+  <div class="stack" id="mat-lines"></div>
+  <div class="stack">
+    <div class="panel"><h3>{{ bi_inline("Where did a supplier lot go?", "Kam išla šarža dodávateľa?") }}</h3>
+      <form id="lot-form" class="trace-search" style="margin:0 0 8px"><input id="lot" placeholder="e.g. L01-0003, SP-0002" autocomplete="off"><button class="btn small" type="submit">{{ bi_inline("Find", "Hľadať") }}</button></form>
+      <div id="lot-out"></div></div>
+    <div class="panel"><h3>{{ bi_inline("Reel store at goods-in", "Sklad cievok pri príjme") }}</h3><div class="table-wrap" id="mat-stock"></div></div>
+    <div class="panel"><h3>{{ bi_inline("Supplier trucks · 24 h", "Kamióny dodávateľov · 24 h") }}</h3><div class="table-wrap" id="mat-deliveries"></div></div>
+    <div class="panel"><h3>{{ bi_inline("Last scans", "Posledné skeny") }}</h3><div class="table-wrap" id="mat-scans"></div></div>
+    <div class="panel"><h3>{{ bi_inline("Floor life of moisture-sensitive reels", "Životnosť cievok citlivých na vlhkosť") }}</h3><div class="table-wrap" id="mat-msl"></div></div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}<script src="/static/material.js?v={{ version }}"></script>{% endblock %}

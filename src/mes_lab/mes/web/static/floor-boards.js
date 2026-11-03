@@ -111,5 +111,19 @@ const FloorBoards = (() => {
       <span class="muted">${T(`Plan = ideal rate of the constraint × ${Math.round(data.efficiency * 100)} %, while the line has a job.`, `Plán = ideálny takt úzkeho hrdla × ${Math.round(data.efficiency * 100)} %, kým má linka zákazku.`)}</span>`;
   }
 
-  return { start, draw, hit, tip, get data() { return data; } };
+  /* a tester with its master sample in it (the check at the start of a shift): a gold unit with a star */
+  function golden(ctx, st, k, t) {
+    if (k < 0.8) return;
+    const x = st.x + st.w / 2, y = st.cy;
+    const glow = 0.55 + 0.25 * Math.sin(t * 3);
+    ctx.save();
+    ctx.globalAlpha = glow;
+    fillRR(ctx, x - 6.5, y - 4.5, 13, 9, 1.4, "rgba(241,196,15,.25)", null);
+    ctx.globalAlpha = 1;
+    fillRR(ctx, x - 4.5, y - 3, 9, 6, 1, "#f1c40f", "#9a7d0a", 0.5);
+    if (k > 2) text(ctx, "★", x, y + 0.2, 4, "#7a5d00", "center", "700");
+    ctx.restore();
+  }
+
+  return { start, draw, hit, tip, golden, get data() { return data; } };
 })();

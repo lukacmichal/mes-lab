@@ -71,6 +71,42 @@ const FloorMachines = (() => {
     }
   }
 
+  /* The reels on the feeders at the front of a placer, as the plant reports them: the ring shows what is
+     left on the reel (green, amber below a quarter, red below a tenth); an amber blink while the operator
+     brings the next reel, a green dot when it is spliced on. */
+  function reels(ctx, w, h, a) {
+    const fd = a.info && a.info.fd;
+    if (!fd || !fd.length || a.k < 0.9) { feeders(ctx, w, h - 7.6, 6); return; }
+    const n = Math.max(fd.length, 4), cw = (w - 8) / n;
+    fd.forEach(([part, fill, flags], i) => {
+      const cx = 4 + i * cw + cw / 2, cy = h - 4.6, r = Math.min(2.6, cw / 2 - 0.4);
+      rect(ctx, cx - cw / 2 + 0.4, h - 9.6, cw - 0.8, 2.6, "#4b5870");                      // the feeder
+      circle(ctx, cx, cy, r, "#20262f", "#59657a", 0.3);                                       // the reel
+      const color = fill < 0.1 ? "#e0453a" : fill < 0.25 ? "#f1a33c" : "#3ddc84";
+      if (fill > 0) {
+        ctx.strokeStyle = color; ctx.lineWidth = 0.9;
+        ctx.beginPath(); ctx.arc(cx, cy, r - 0.55, -Math.PI / 2, -Math.PI / 2 + fill * Math.PI * 2); ctx.stroke();
+      }
+      circle(ctx, cx, cy, 0.6, "#a9b4c0");
+      if ((flags & 1) && Math.sin(a.t * 6) > 0) circle(ctx, cx, cy, r + 0.5, null, "#f1a33c", 0.6);
+      if (flags & 2) circle(ctx, cx + r - 0.2, cy - r + 0.4, 0.8, "#3ddc84");
+      if (a.k > 3.2) text(ctx, part.split("-").slice(1).join("-"), cx, h - 10.4, 1.3, P.textDim, "center", "600");
+    });
+  }
+
+  /* the jar of solder paste on the printer: its colour turns from green to red as its open time runs out,
+     the ring shows the prints left */
+  function pasteJar(ctx, w, h, a) {
+    const pj = a.info && a.info.pj;
+    if (!pj || a.k < 0.9) return;
+    const [open, left] = pj;
+    const color = open > 0.92 ? "#e0453a" : open > 0.75 ? "#f1a33c" : "#3ddc84";
+    circle(ctx, w - 6, 6, 3, "#cfd6de", "#7d8896", 0.4);
+    circle(ctx, w - 6, 6, 2.1, "#8b929b");
+    ctx.strokeStyle = color; ctx.lineWidth = 0.9;
+    ctx.beginPath(); ctx.arc(w - 6, 6, 2.7, -Math.PI / 2, -Math.PI / 2 + Math.max(0.02, left) * Math.PI * 2); ctx.stroke();
+  }
+
   function laser(ctx, w, h, a, beamLen = 9) {
     const on = working(a);
     const x = on ? w / 2 + Math.sin(a.p * Math.PI * 6) * (w * 0.2) : w / 2;
@@ -107,10 +143,15 @@ const FloorMachines = (() => {
       fillRR(ctx, 4, 5, 10, h - 10, 1, "#4b5870");
       const lines = racks == null ? 4 : Math.ceil(racks / 10);
       for (let i = 0; i < 4; i++) rect(ctx, 5.2, 7 + i * 4.6, 7.6, 2.2, i < lines ? "#3c8a64" : "rgba(0,0,0,.25)");
+      // the second magazine: panels back from the first side (underneath the machines) or from the washer
+      const back = a.extra.back || 0;
+      fillRR(ctx, w - 11, 5, 7, h - 10, 1, "#4b5870");
+      for (let i = 0; i < 4; i++) rect(ctx, w - 10, 7 + i * 4.6, 5, 2.2, i < Math.min(4, back) ? "#5f8fc4" : "rgba(0,0,0,.25)");
     },
     top(ctx, w, h, a) {
       const push = working(a) ? tri(seg(a.p, 0, 0.6)) : 0;
-      rect(ctx, 15 + push * (w - 26), h / 2 - 2, 2.2, 4, "#d4dae3");
+      rect(ctx, 15 + push * (w - 30), h / 2 - 2, 2.2, 4, "#d4dae3");
+      if (a.k > 1.6 && a.extra.back) text(ctx, String(a.extra.back), w - 7.5, h - 1.8, 3.4, P.text, "center", "700");
     },
   };
 
@@ -128,6 +169,7 @@ const FloorMachines = (() => {
       const x = w / 2 - 11 + sweep * 22;
       rect(ctx, x - 0.6, 7, 1.2, h - 14, "#5f6b7a");
       rect(ctx, x - 1.6, 6.4, 3.2, 1.8, "#c8ced6");
+      pasteJar(ctx, w, h, a);
     },
   };
 
@@ -146,7 +188,7 @@ const FloorMachines = (() => {
     return {
       base(ctx, w, h, a) {
         feeders(ctx, w, 4.2, 6);
-        feeders(ctx, w, h - 7.6, 6);
+        reels(ctx, w, h, a);
       },
       top(ctx, w, h, a) {
         const on = working(a);
@@ -420,7 +462,14 @@ const FloorMachines = (() => {
     const T2 = (en, sk) => (a.lang === "sk" ? sk : en);
     let msg = null;
     const cr = a.info && a.info.cr;
-    if (cr) {
+    if (cr && cr.k === "changeover") {                        // the operator changes the machine over
+      const side = a.info.r === "SIDE_CHANGE";
+      const what = side ? T2("changeover to the other side", "prestavba na druhú stranu") : T2("changeover", "prestavba");
+      const co = a.info.co;
+      msg = cr.ph === "wait" ? `${what} · ${T2("waiting for the operator", "čaká na operátora")}`
+        : cr.ph === "walk" ? `${what} · ${T2("operator on the way", "operátor ide k stroju")}`
+        : co ? `${what} · ${T2("still", "ešte")} ${Math.max(1, Math.ceil(co.left / 60))} min` : what;
+    } else if (cr) {
       const who = cr.k === "call" ? T2("technician", "technik") : T2("operator", "operátor");
       msg = cr.ph === "wait" ? T2(`waiting for a ${who}`, `čaká na: ${who}`)
         : cr.ph === "walk" ? T2(`${who} is on the way`, `${who} ide k stroju`)
@@ -428,7 +477,12 @@ const FloorMachines = (() => {
     } else if (a.state === "STARVED") msg = T2("waiting for parts", "čaká na kusy");
     else if (a.state === "BLOCKED") msg = T2("next one is full", "ďalšia plná");
     else if (a.state === "NO_ORDER") msg = T2("no order", "bez zákazky");
-    else if (a.state === "CHANGEOVER") msg = T2("changeover", "prestavba");
+    else if (a.state === "CHANGEOVER") {
+      const side = a.info && a.info.r === "SIDE_CHANGE";
+      msg = side ? T2("changeover to the other side", "prestavba na druhú stranu") : T2("changeover", "prestavba");
+      const co = a.info && a.info.co;
+      if (co) msg += ` · ${T2("still", "ešte")} ${Math.max(1, Math.ceil(co.left / 60))} min`;
+    }
     else if (a.state === "DOWN") msg = T2("breakdown", "porucha");
     else if (a.state === "MAINTENANCE") msg = T2("service", "údržba");
     else if (a.state === "MINOR_STOP") msg = T2("minor stop", "mikroprestoj");
@@ -437,6 +491,12 @@ const FloorMachines = (() => {
       const bw = st.w - 8;
       rect(ctx, 4, st.h + 3.2, bw, 1.6, "rgba(127,140,160,.35)");
       rect(ctx, 4, st.h + 3.2, bw * a.p, 1.6, a.phase === "verify" ? "#2f73e0" : "#1f9d63");
+    }
+    const co = a.info && a.info.co;
+    if (a.state === "CHANGEOVER" && co && a.k > 1.6) {      // how far the changeover is
+      const bw = st.w - 8;
+      rect(ctx, 4, st.h + 3.2, bw, 1.6, "rgba(127,140,160,.35)");
+      rect(ctx, 4, st.h + 3.2, bw * co.p, 1.6, "#2f73e0");
     }
   }
 

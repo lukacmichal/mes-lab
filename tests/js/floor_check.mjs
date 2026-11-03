@@ -85,7 +85,10 @@ for (const [n, msg] of input.messages.entries()) {
     sprites++;
     const at = Floor.locate(s.loc);
     if (!at || !finite(at.x) || !finite(at.y)) { problem(`snapshot ${n}: piece ${s.id} has no place (${s.loc.t})`); continue; }
-    if (Math.hypot(s.x - at.x, s.y - at.y) > 0.5) problem(`snapshot ${n}: piece ${s.id} did not arrive (${s.x.toFixed(1)},${s.y.toFixed(1)} vs ${at.x.toFixed(1)},${at.y.toFixed(1)})`);
+    if (s.path && s.pathSim && Floor.S.sim < s.pathSim[1]) {   // still riding the conveyor to the next cell: on its way
+      const d = distanceToRoute({ pts: s.path }, s.x, s.y);
+      if (d > 0.6) problem(`snapshot ${n}: piece ${s.id} is ${d.toFixed(1)} off its conveyor in the line`);
+    } else if (Math.hypot(s.x - at.x, s.y - at.y) > 0.5) problem(`snapshot ${n}: piece ${s.id} did not arrive (${s.x.toFixed(1)},${s.y.toFixed(1)} vs ${at.x.toFixed(1)},${at.y.toFixed(1)})`);
     if (at.x < -5 || at.x > W.w + 5 || at.y < -5 || at.y > W.h + 5) problem(`snapshot ${n}: piece ${s.id} outside the plant (${at.x}, ${at.y}) in ${s.loc.t}`);
     if (s.loc.t === "slot" && !insideStation(s.loc.code, at.x, at.y)) problem(`snapshot ${n}: piece ${s.id} not inside ${s.loc.code}`);
     if (s.loc.t === "ride") {

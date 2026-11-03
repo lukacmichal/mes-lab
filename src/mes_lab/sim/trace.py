@@ -52,6 +52,10 @@ class TraceClient(Protocol):
                result: str, defects: list[tuple[Item, list[str]]] = (),
                measurements: dict | None = None, action: str | None = None) -> None: ...
     def repair_done(self, station: Station, item: Item, success: bool) -> Decision: ...
+    def verification(self, station: Station, result: str, start: float, person: str | None = None) -> None: ...
+    def material_scan(self, station: Station, body: dict, thing) -> Decision: ...
+    def goods(self, body: dict, who=None) -> Decision: ...
+    def ship_check(self, pallet: Item) -> Decision: ...
     def take_records(self) -> list[dict]: ...
     def restore_records(self, records: list[dict]) -> None: ...
 
@@ -90,12 +94,18 @@ class LocalTrace(_Buffered):
         super().__init__(plant)
         self.serials = SerialGenerator()
         self.open: dict[tuple[str, str], list] = {}  # (station, material) -> [serial, count]
+        self.notes: dict[str, dict[str, int]] = {}   # delivery note -> part -> reels still to come
 
     def record(self, *args, **kwargs) -> None:
         pass  # nobody to tell
 
+    def ship_check(self, pallet) -> Decision:
+        return Decision(True)
+
     def check_in(self, station, item, job, consume=None) -> Decision:
         code = station.type.code
+        if code == "PASTE_PRINTER" and self.plant.material.paste_expired(station, self.plant.now):
+            return Decision(False, "PASTE_EXPIRED", "the solder paste is open too long")
         if code == "LASER_PCB" and not item.serial:
             serial = self.serials.panel()
             return Decision(True, data={"serial": serial, "boards": [
@@ -120,6 +130,43 @@ class LocalTrace(_Buffered):
     def repair_done(self, station, item, success) -> Decision:
         return Decision(True, data={"disposition": "RETURN" if success else "SCRAP",
                                     "return_to": None})
+
+    def verification(self, station, result, start, person=None) -> None:
+        pass                                         # offline nobody keeps it
+
+    def goods(self, body, who=None) -> Decision:
+        """The checks of the MES at goods-in (see mes/material.py): a reel on the delivery note, the oldest
+        reel out of the store first."""
+        receiving = self.plant.receiving
+        kind = body["kind"]
+        if kind == "ARRIVAL":
+            self.notes[body["note"]] = {line["part"]: line["reels"] for line in body["lines"]}
+            return Decision(True)
+        if kind == "RECEIPT":
+            left = self.notes.get(body["note"], {})
+            if left.get(body["part"], 0) <= 0:
+                return Decision(False, "NOT_ORDERED", f"{body['part']} is not on the delivery note")
+            left[body["part"]] -= 1
+            return Decision(True)
+        if kind == "ISSUE":
+            queue = receiving.store.get(body["part"])
+            if queue and queue[0][0].id != body["item"]:
+                return Decision(False, "FIFO", f"take {queue[0][0].id} first")
+        return Decision(True)
+
+    def material_scan(self, station, body, thing) -> Decision:
+        """The checks of the MES at a scan of SMT material (see mes/material.py)."""
+        material = self.plant.material
+        now = self.plant.now
+        if body["kind"] == "PASTE":
+            if now - thing.out_at < material.cfg.paste.thaw_h * 3600:
+                return Decision(False, "PASTE_NOT_THAWED", "the jar has not thawed long enough")
+            return Decision(True)
+        if thing.part != body["slot"]:
+            return Decision(False, "WRONG_PART", f"{thing.part} on the feeder of {body['slot']}")
+        if material.expired(thing, now):
+            return Decision(False, "MSL_EXPIRED", "the floor life of the reel ran out")
+        return Decision(True)
 
 
 class MesTrace(_Buffered):
@@ -147,13 +194,39 @@ class MesTrace(_Buffered):
                         {k: v for k, v in data.items() if k not in ("ok", "reason", "message")})
 
     def check_in(self, station, item, job, consume=None) -> Decision:
+        person = self.plant.crew.operator_at(station)
         return self._call("check-in", {
             "station": station.code, "job_id": job.id if job else None,
+            "operator": person.id if person is not None else None,
             "serial": None if consume is not None else item.serial,
             "consume": consume.serial if consume is not None else None,
             "pieces": len(item.children) if item.kind == "PANEL" else None,
         })
 
     def repair_done(self, station, item, success) -> Decision:
+        person = self.plant.crew.operator_at(station)
         return self._call("repair", {"station": station.code, "serial": item.serial,
-                                     "success": success})
+                                     "success": success, "operator": person.id if person is not None else None})
+
+    def material_scan(self, station, body, thing) -> Decision:
+        """A scan of SMT material (a reel at a feeder, a paste jar at a printer): may it go on?"""
+        person = self.plant.crew.operator_at(station)
+        return self._call("material", {"station": station.code,
+                                       "operator": person.id if person is not None else None, **body})
+
+    def ship_check(self, pallet) -> Decision:
+        """The pallet label is scanned at the truck: may it leave? (A pallet on hold stays.)"""
+        return self._call("ship", {"serial": pallet.serial})
+
+    def goods(self, body, who=None) -> Decision:
+        """A scan at goods-in (a delivery note, a reel received, a reel out of the store for a line)."""
+        return self._call("material", {"station": None, "place": "GI",
+                                       "operator": who.id if who is not None else None, **body})
+
+    def verification(self, station, result, start, person=None) -> None:
+        """The master sample check of a tester; a lost one is simply done again when the MES asks."""
+        try:
+            self._call("verification", {"station": station.code, "result": result,
+                                        "start": self.plant.clock.iso(start), "person": person})
+        except MesUnavailable:
+            pass

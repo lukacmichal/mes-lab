@@ -1,5 +1,6 @@
 (() => {
   const { esc, n, pill, label, STATES } = MES;
+  const T = (en, sk) => (MES.lang() === "sk" ? sk : en);
 
   const legend = () => {
     document.getElementById("legend").innerHTML = STATES.map((s) =>
@@ -62,11 +63,11 @@
     const k = d.kpis;
     const repair = d.repair || {};
     document.getElementById("kpis").innerHTML = [
-      kpi("Final assembly · this shift", n(k.fa_output_shift), "units"),
-      kpi("Packed · this shift", n(k.packed_shift), "units"),
-      kpi("Stations down", n(k.down_stations), "", k.down_stations > 0),
-      kpi("Open work orders", n(k.open_orders)),
-      kpi("In repair", n((repair.queue || 0) + (repair.in_work || 0)), "units"),
+      kpi(T("Final assembly · this shift", "Finálna montáž · táto zmena"), n(k.fa_output_shift), T("units", "ks")),
+      kpi(T("Packed · this shift", "Zabalené · táto zmena"), n(k.packed_shift), T("units", "ks")),
+      kpi(T("Stations down", "Stanice s poruchou"), n(k.down_stations), "", k.down_stations > 0),
+      kpi(T("Open work orders", "Otvorené zákazky"), n(k.open_orders)),
+      kpi(T("In repair", "V oprave"), n((repair.queue || 0) + (repair.in_work || 0)), T("units", "ks")),
     ].join("");
 
     document.getElementById("areas").innerHTML = d.areas.filter((a) => a.lines.length).map((a) => `

@@ -180,6 +180,16 @@ class MaterialReport(BaseModel):
     levels: list[MaterialLevel] = []
 
 
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class TuningRunRequest(BaseModel):
+    knobs: dict | None = None                 # the knobs to try (missing ones: as the plant has them)
+    hours: int = 12                           # plant hours to run (one of tuning.HOURS, else 12)
+
+
 class ScenarioRequest(BaseModel):
     knobs: dict | None = None                 # the knobs of a tuning scenario; None: the plant as configured
 

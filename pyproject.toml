@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mes-lab"
-version = "0.21.1"
+version = "0.21.2"
 description = "Virtual automotive electronics plant (discrete-event simulation) with its own MES"
 requires-python = ">=3.12"
 dependencies = [
@@ -26,7 +26,7 @@ dependencies = [
 
 [project.optional-dependencies]
 # zxing: the label tests read the bar codes back; amqtt: an MQTT broker for local development and the tests
-dev = ["pytest>=8", "pgserver>=0.1.4", "zxing-cpp>=2.2", "numpy", "amqtt>=0.11"]
+dev = ["pytest>=8", "pgserver>=0.1.4", "zxing-cpp>=2.2", "numpy", "amqtt>=0.11", "ruff>=0.6"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -38,3 +38,20 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+# slow: runs hours of the plant (see tests/conftest.py); `pytest -m "not slow"` is the quick round
+markers = ["slow: simulates hours of the plant, takes minutes"]
+filterwarnings = [
+    # the plant's client sets a timeout per request; the TestClient standing in for the MES does not use it
+    "ignore:You should not use the 'timeout' argument with the TestClient",
+    "ignore:Using `httpx` with `starlette.testclient` is deprecated",
+]
+
+[tool.ruff]
+line-length = 140
+target-version = "py312"
+extend-exclude = ["src/mes_lab/mes/migrations/versions", "var"]
+
+[tool.ruff.lint]
+# pyflakes and the errors of pycodestyle that are bugs rather than taste
+select = ["F", "E9", "E7"]
+ignore = ["E731", "E741"]

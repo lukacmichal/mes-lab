@@ -9,6 +9,19 @@ from sqlalchemy import create_engine, text
 from mes_lab.model import load_model
 
 
+# These run hours of the plant and take minutes: `pytest -m "not slow"` leaves them out (the quick round while
+# working on the MES and its pages); before a release, and in CI, everything runs.
+SLOW_MODULES = {"test_crew", "test_floor", "test_floor_js", "test_sim", "test_shipping", "test_material", "test_connect",
+                "test_traffic", "test_planning"}
+SLOW_TESTS = {"test_simulation_drives_the_mes"}
+
+
+def pytest_collection_modifyitems(items):
+    for item in items:
+        if item.module.__name__ in SLOW_MODULES or item.name in SLOW_TESTS:
+            item.add_marker(pytest.mark.slow)
+
+
 @pytest.fixture(scope="session")
 def model():
     return load_model()

@@ -115,6 +115,7 @@
   let timer = null;
   async function refresh() {
     clearTimeout(timer);
+    if (document.hidden) { timer = setTimeout(refresh, 2000); return; }   // nobody looks: ask nothing
     try {
       const [a, b] = await Promise.all([
         fetch(`/api/v1/uns?prefix=${encodeURIComponent(filter)}`, { cache: "no-store" }),

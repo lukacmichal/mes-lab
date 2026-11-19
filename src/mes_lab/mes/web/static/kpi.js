@@ -124,6 +124,7 @@
   }
 
   async function load() {
+    if (document.hidden && data) return;        // nobody looks: ask nothing
     try {
       const r = await fetch(`/api/v1/kpi?window=${encodeURIComponent(windowName)}`, { cache: "no-store" });
       if (r.ok) { data = await r.json(); MES.setClock(data.clock); render(); }

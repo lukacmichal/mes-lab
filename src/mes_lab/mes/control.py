@@ -8,7 +8,7 @@ import logging
 import random
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import exists, func, select, text, update
+from sqlalchemy import exists, func, select, text
 from sqlalchemy.orm import Session
 
 from mes_lab import planning

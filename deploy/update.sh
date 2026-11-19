@@ -15,7 +15,7 @@ rm -rf "$APP.old"
 [ -d "$APP" ] && mv "$APP" "$APP.old"
 mv "$APP.new" "$APP"
 
-sudo -u mes /opt/mes-lab/venv/bin/pip install -q --disable-pip-version-check -e "$APP"
+sudo -u mes /opt/mes-lab/venv/bin/pip install -q --disable-pip-version-check -c "$APP/deploy/constraints.txt" -e "$APP"
 sudo -u mes bash -c 'set -a; . /etc/mes-lab/mes.env; set +a; cd /opt/mes-lab/app && /opt/mes-lab/venv/bin/python -m mes_lab.mes migrate'
 
 systemctl start mes-lab-mes

@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
 from .core import Item
-from .crew import LOGISTICS
+from .crew_base import LOGISTICS
 from .trace import MesUnavailable
 
 if TYPE_CHECKING:

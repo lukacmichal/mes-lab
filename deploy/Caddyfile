@@ -2,15 +2,23 @@ __DOMAIN__ {
 	encode zstd gzip
 
 	# the shop-floor API is for the plant on this machine only
-	@shopfloor path /api/v1/edge/* /api/v1/trace/check-in /api/v1/trace/repair /api/v1/trace/verification /api/v1/trace/material /api/v1/dispatch/* /api/v1/sim/runs /api/v1/sim/scenario /api/v1/sim/people /api/v1/sim/reels
+	@shopfloor path /api/v1/edge/* /api/v1/trace/check-in /api/v1/trace/repair /api/v1/trace/verification /api/v1/trace/material /api/v1/trace/ship /api/v1/dispatch/* /api/v1/sim/runs /api/v1/sim/scenario /api/v1/sim/people /api/v1/sim/reels
 	respond @shopfloor 404
 
 	reverse_proxy 127.0.0.1:8070
+
+	# the pages ask for their scripts and styles with ?v=<version>: such an address never changes
+	@versioned {
+		path /static/*
+		query v=*
+	}
+	header @versioned Cache-Control "public, max-age=31536000, immutable"
 
 	header {
 		Strict-Transport-Security "max-age=31536000"
 		X-Content-Type-Options "nosniff"
 		X-Frame-Options "DENY"
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
 		Referrer-Policy "same-origin"
 		X-Robots-Tag "noindex, nofollow"
 		-Server

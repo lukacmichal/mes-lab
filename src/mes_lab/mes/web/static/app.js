@@ -168,6 +168,7 @@ const MES = (() => {
 
   async function poll(url, render, everyMs = 2000) {
     const run = async () => {
+      if (document.hidden) { setTimeout(run, everyMs); return; }   // nobody looks: ask nothing
       try {
         const r = await fetch(url, { cache: "no-store" });
         if (r.ok) {
@@ -224,6 +225,7 @@ const MES = (() => {
   }
 
   async function refreshClock() {
+    if (document.hidden) return;
     try {
       const r = await fetch("/api/v1/clock", { cache: "no-store" });
       if (r.ok) { setClock((await r.json()).clock); tick(); }
@@ -438,7 +440,8 @@ const MES = (() => {
 
   const upill = (status, text) => `<span class="pill us-${esc(status)}">${esc(text || String(status).replace("_", " "))}</span>`;
 
-  setInterval(refreshClock, 5000);       // pages that do not poll still see a pause or a jump
+  setInterval(refreshClock, 5000);
+  document.addEventListener("visibilitychange", refreshClock);   // back on the page: the clock at once       // pages that do not poll still see a pause or a jump
   return { esc, label, STATES, poll, setClock, duration, since, n, pill, upill, hm, dt, nowMs, lang, tr, post, store,
     localInput, fromLocalInput, refreshClock, can };
 })();

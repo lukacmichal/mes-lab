@@ -90,6 +90,7 @@
   let timer = null;
   async function refresh() {
     clearTimeout(timer);
+    if (document.hidden) { timer = setTimeout(refresh, 5000); return; }   // nobody looks: ask nothing
     try {
       const r = await fetch("/api/v1/holds", { cache: "no-store" });
       if (r.ok) {

@@ -140,6 +140,7 @@
     }
   }
   async function loadLive() {
+    if (document.hidden) { setTimeout(loadLive, 8000); return; }
     try {
       const r = await fetch("/api/v1/plant/scenario", { cache: "no-store" });
       if (r.ok) { live = await r.json(); renderLive(); }

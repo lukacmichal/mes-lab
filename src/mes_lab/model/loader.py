@@ -11,7 +11,6 @@ import yaml
 from mes_lab.labels import unknown as label_unknown
 
 from .schema import (
-    JOB_AREAS,
     AmrConfig,
     Area,
     AreaKind,

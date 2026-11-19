@@ -211,7 +211,9 @@ Other entry points:
 | `python -m mes_lab.mes` | only the MES |
 | `python -m mes_lab.mes user NAME` | create a web user (prints a generated password) |
 | `python -m mes_lab.sim run --speed 60` | only the plant, against a running MES |
-| `python -m pytest` | tests (model, floor plan, simulation, live snapshot, MES API, simulation driving the MES; the browser code runs in Node when it is installed) |
+| `python -m pytest -m "not slow"` | the quick round of tests: the MES and its pages, a few minutes |
+| `python -m ruff check .` | lint |
+| `python -m pytest` | all tests, about half an hour (model, floor plan, simulation, live snapshot, MES API, simulation driving the MES; the browser code runs in Node when it is installed) |
 
 Environment: `MES_DATABASE_URL` (postgresql+psycopg://...), `MES_EDGE_TOKEN`
 (required bearer token on the shop-floor API when set), `MES_LOGIN` (`actions`: anybody

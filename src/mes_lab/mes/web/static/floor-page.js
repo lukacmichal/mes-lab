@@ -584,6 +584,7 @@
   async function pollLine() {
     if (!selected || !selected.line) return;
     const code = selected.line;
+    if (document.hidden) { lineTimer = setTimeout(pollLine, 2500); return; }
     try {
       const r = await fetch(`/api/v1/lines/${encodeURIComponent(code)}`, { cache: "no-store" });
       if (r.ok && selected && selected.line === code) { lineData = await r.json(); if (selected.station) renderSide(); }

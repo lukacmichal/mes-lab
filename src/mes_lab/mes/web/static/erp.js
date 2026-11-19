@@ -129,6 +129,7 @@
   let timer = null;
   async function refresh() {
     clearTimeout(timer);
+    if (document.hidden) { timer = setTimeout(refresh, 5000); return; }   // nobody looks: ask nothing
     try {
       const [a, b] = await Promise.all([fetch("/api/v1/erp", { cache: "no-store" }),
         fetch(`/api/v1/erp/messages?limit=80&status=${encodeURIComponent(status)}`, { cache: "no-store" })]);

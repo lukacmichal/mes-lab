@@ -34,6 +34,7 @@
   let timer = null;
   async function refresh() {
     clearTimeout(timer);
+    if (document.hidden) { timer = setTimeout(refresh, 4000); return; }   // nobody looks: ask nothing
     try {
       const r = await fetch(`/api/v1/orders?status=${encodeURIComponent(status)}&limit=300`, { cache: "no-store" });
       if (r.ok) {

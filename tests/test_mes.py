@@ -175,6 +175,28 @@ def test_ingest_requires_known_run(client):
     assert r.status_code == 404
 
 
+def test_nonsense_from_a_visitor_is_no_failure_of_the_mes(client):
+    """Anybody may ask the read models and play the tuning game: a wrong number must not count as a failed
+    request (the red "the MES is failing" banner on every page)."""
+    for url in ("/api/v1/orders?limit=-1", "/api/v1/shipments?limit=-5", "/api/v1/erp/messages?limit=-1",
+                "/api/v1/orders?limit=0", "/api/v1/settings/log?limit=-3"):
+        assert client.get(url).status_code == 200, url
+    for body in ({"hours": "abc"}, {"knobs": "x"}, [1]):
+        assert client.post("/api/v1/tuning/runs", json=body).status_code == 422, body
+    assert client.get("/api/v1/clock").json()["clock"]["mes_errors"]["count"] == 0
+
+
+def test_the_pages_ask_for_their_files_by_content(client):
+    """?v= behind a script or a style is a digest of the static files, so the proxy lets browsers keep them."""
+    import re
+
+    from mes_lab.mes.app import asset_version
+    from mes_lab.mes.context import WEB_DIR
+    page = client.get("/overview").text
+    seen = set(re.findall(r'/static/[\w.-]+\?v=([0-9a-f]+)"', page))
+    assert seen == {asset_version(WEB_DIR / "static")} and len(page.split("/static/")) > 10
+
+
 # ---------------------------------------------------------------- check-in rules
 
 def _record(serial, station, step, t, result="PASS", defects=(), job_id=None):

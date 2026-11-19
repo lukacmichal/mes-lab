@@ -33,7 +33,7 @@ import heapq
 import math
 from dataclasses import dataclass, field
 
-from mes_lab.model.schema import AreaKind, PlantModel
+from mes_lab.model.schema import PlantModel
 
 SPOT = 8          # distance of a standing person from the machine
 SPOT_TOP = 6      # ... at the top lane of a double cell, where the robot lane of the aisle runs close by
@@ -479,7 +479,6 @@ def build(layout, ctx: dict) -> None:
     layout.amr = amr
 
     smt_end = max((layout.lines[l.code]["x2"] for l in smt), default=0)
-    x_fa0 = min((layout.lines[l.code]["x1"] for l in fa), default=0)
     x_col = ctx["x_col"]
     # the left side of an area: robot trunk, team desks (with the hand-over place and the waiting places
     # of the relief people), then the walkway trunk, then the machines

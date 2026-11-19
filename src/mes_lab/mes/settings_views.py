@@ -4,7 +4,6 @@ value of the config files and the draft, and the change log (who changed what fr
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session

@@ -28,7 +28,7 @@ from .material import Reel
 from .trace import MesUnavailable
 
 if TYPE_CHECKING:
-    from .crew import Person
+    from .crew_base import Person
     from .plant import PlantSim
 
 log = logging.getLogger("mes_lab.receiving")

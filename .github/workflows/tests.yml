@@ -37,7 +37,10 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install -c deploy/constraints.txt -e ".[dev]"
+      # The app with the versions the server runs, the test tools on top without them:
+      # amqtt (the MQTT broker of the tests) pins websockets==15.0.1, the server runs 17.2.
+      - run: pip install -c deploy/constraints.txt -e .
+      - run: pip install -e ".[dev]"
       - run: python -m pytest -q -m "not slow"
 
   full:
@@ -65,5 +68,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - run: pip install -c deploy/constraints.txt -e ".[dev]"
+      - run: pip install -c deploy/constraints.txt -e .
+      - run: pip install -e ".[dev]"
       - run: python -m pytest -q
